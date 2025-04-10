@@ -2,6 +2,7 @@ import { Alert } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/app/lib/supabase';
 import * as Haptics from 'expo-haptics';
+import { AppRoute } from '../types/router';
 
 /**
  * Handles the complete sign-out process
@@ -51,13 +52,8 @@ export const signOut = async (setLoadingCallback?: (loading: boolean) => void): 
       setLoadingCallback(false);
     }
     
-    // Force memory cleanup
-    global.gc?.();
-    
-    // Navigate to welcome screen - use a more reliable approach
-    setTimeout(() => {
-      router.replace('/' as any);
-    }, 300);
+    // Navigate to welcome screen immediately
+    router.replace('/' as any);
   } catch (error) {
     console.error('Error during sign out:', error);
     Alert.alert('Error', 'Failed to sign out. Please try again.');

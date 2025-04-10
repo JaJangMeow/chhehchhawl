@@ -8,7 +8,7 @@ import * as Haptics from 'expo-haptics';
 interface AadhaarInputProps {
   label: string;
   value: string;
-  onChange: (value: string) => void;
+  onChangeText: (value: string) => void;
   delay?: number;
   error?: string;
 }
@@ -16,7 +16,7 @@ interface AadhaarInputProps {
 export default function AadhaarInput({
   label,
   value,
-  onChange,
+  onChangeText,
   delay = 0,
   error
 }: AadhaarInputProps) {
@@ -40,8 +40,8 @@ export default function AadhaarInput({
   useEffect(() => {
     // When our parts change, update the overall value
     const combinedValue = part1 + part2 + part3;
-    onChange(combinedValue);
-  }, [part1, part2, part3, onChange]);
+    onChangeText(combinedValue);
+  }, [part1, part2, part3]);
 
   const handlePart1Change = (text: string) => {
     // Only allow numbers

@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { taskService } from '../services/taskService';
 import { Task } from '../types/task';
-import { TaskCard } from '../components/tasks/TaskCard';
+import TaskCard from '../components/tasks/TaskCard';
 import { EmptyState } from '../components/shared/EmptyState';
 import Colors from '../constants/Colors';
 import { logger } from '../utils/logger';
@@ -48,7 +48,7 @@ export default function TasksListScreen() {
 
   // Handle task press
   const handleTaskPress = (task: Task) => {
-    router.push(`/tasks/${task.id}`);
+    router.push(`/tasks/${task.id}` as any);
   };
 
   // Format date for display
@@ -116,7 +116,7 @@ export default function TasksListScreen() {
         message="There are no tasks available at the moment. Pull down to refresh or create a new task."
         icon="search-outline"
         buttonText="Create Task"
-        onButtonPress={() => router.push('/create-task')}
+        onButtonPress={() => router.push('/create-task' as any)}
       />
     );
   };
@@ -142,7 +142,7 @@ export default function TasksListScreen() {
 
       <TouchableOpacity 
         style={styles.fab}
-        onPress={() => router.push('/create-task')}
+        onPress={() => router.push('/create-task' as any)}
         activeOpacity={0.8}
       >
         <Ionicons name="add" size={24} color="white" />

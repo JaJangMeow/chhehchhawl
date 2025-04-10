@@ -5,13 +5,14 @@
 // Define all the app routes for type-safety in router.push() calls
 export type AppRoute = 
   | '/(tabs)'
-  | '/(tabs)/home'
-  | '/(tabs)/chat'
+  | '/(tabs)/index'
   | '/(tabs)/tasks'
+  | '/(tabs)/history'
   | '/(tabs)/profile'
   | '/(auth)/login'
   | '/(auth)/signup'
-  | '/chat/[id]';
+  | '/chat/[id]'
+  | '/tasks/[id]';
 
 // Route parameters structure
 export interface RouteParams {
@@ -28,4 +29,10 @@ declare global {
   }
 }
 
-export default AppRoute; 
+/**
+ * Default export for Expo Router compatibility.
+ * This prevents the "missing the required default export" warning.
+ */
+export default function RouteTypes() {
+  return null;
+} 

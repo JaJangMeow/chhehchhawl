@@ -95,6 +95,137 @@ export interface Database {
           task_photos?: string[]
         }
       }
+      profiles: {
+        Row: {
+          id: string
+          email: string | null
+          first_name: string | null
+          last_name: string | null
+          full_name: string | null
+          phone: string | null
+          address: string | null
+          city: string | null
+          state: string | null
+          dob: string | null
+          gender: string | null
+          aadhaar: string | null
+          upi: string | null
+          avatar_url: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id: string
+          email?: string | null
+          first_name?: string | null
+          last_name?: string | null
+          full_name?: string | null
+          phone?: string | null
+          address?: string | null
+          city?: string | null
+          state?: string | null
+          dob?: string | null
+          gender?: string | null
+          aadhaar?: string | null
+          upi?: string | null
+          avatar_url?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          email?: string | null
+          first_name?: string | null
+          last_name?: string | null
+          full_name?: string | null
+          phone?: string | null
+          address?: string | null
+          city?: string | null
+          state?: string | null
+          dob?: string | null
+          gender?: string | null
+          aadhaar?: string | null
+          upi?: string | null
+          avatar_url?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+      }
+      conversations: {
+        Row: {
+          id: string
+          task_id: string
+          created_at: string
+          updated_at: string
+          last_message: string | null
+          last_message_at: string | null
+          category: string | null
+        }
+        Insert: {
+          id?: string
+          task_id: string
+          created_at?: string
+          updated_at?: string
+          last_message?: string | null
+          last_message_at?: string | null
+          category?: string | null
+        }
+        Update: {
+          id?: string
+          task_id?: string
+          created_at?: string
+          updated_at?: string
+          last_message?: string | null
+          last_message_at?: string | null
+          category?: string | null
+        }
+      }
+      conversation_participants: {
+        Row: {
+          id: string
+          conversation_id: string
+          user_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          conversation_id: string
+          user_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          conversation_id?: string
+          user_id?: string
+          created_at?: string
+        }
+      }
+      messages: {
+        Row: {
+          id: string
+          conversation_id: string
+          sender_id: string
+          content: string
+          is_read: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          conversation_id: string
+          sender_id: string
+          content: string
+          is_read?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          conversation_id?: string
+          sender_id?: string
+          content?: string
+          is_read?: boolean
+          created_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -111,7 +242,7 @@ export interface Database {
 // Simple class to provide supabase database schema info at runtime
 export class SupabaseSchema {
   static getTableNames(): string[] {
-    return ['tasks'];
+    return ['tasks', 'profiles', 'conversations', 'conversation_participants', 'messages'];
   }
 }
 

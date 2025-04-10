@@ -286,4 +286,71 @@ export default {
   isAuthenticated,
   getUserId,
   checkSessionStorageHealth
+};
+
+export const troubleshootSignUp = async (email: string): Promise<void> => {
+  console.log('Troubleshooting signup for:', email);
+  
+  try {
+    // Check if user already exists in auth.users
+    const { data: session, error: sessionError } = await supabase.auth.getSession();
+    
+    console.log('Current session:', session ? 'Active' : 'None');
+    
+    // Get users and filter manually since filter param isn't supported
+    const { data: usersData, error: userError } = await supabase.auth.admin.listUsers();
+    
+    if (userError) {
+      console.log('Error checking for existing user:', userError.message);
+    } else if (usersData && usersData.users) {
+      // Find user with matching email
+      const user = usersData.users.find(u => u.email === email);
+      
+      if (user) {
+        console.log('User already exists:', user);
+        
+        // Check if profile exists for this user
+        const userId = user.id;
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .single();
+          
+        if (profileError) {
+          console.log('Error checking for profile:', profileError.message);
+          
+          // Try to create profile if it doesn't exist
+          if (profileError.code === 'PGRST116') {
+            console.log('Profile does not exist, attempting to create one');
+            const { error: createError } = await supabase
+              .from('profiles')
+              .insert({
+                id: userId,
+                email: email,
+                first_name: email.split('@')[0],
+                last_name: '',
+                full_name: email.split('@')[0],
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              });
+              
+            if (createError) {
+              console.log('Failed to create profile:', createError.message);
+            } else {
+              console.log('Profile created successfully');
+            }
+          }
+        } else {
+          console.log('Profile exists:', profileData);
+        }
+      } else {
+        console.log('User does not exist');
+      }
+    } else {
+      console.log('No users data available');
+    }
+  } catch (e) {
+    console.error('Troubleshooting error:', e);
+  }
 }; 

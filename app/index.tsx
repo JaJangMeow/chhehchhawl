@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, Dimensions, Platform } from 'react-native';
 import { Link, router } from 'expo-router';
+import type { ExternalPathString } from 'expo-router';
 import { Colors } from '@/app/constants/Colors';
 import { ArrowRight } from 'lucide-react-native';
 import Animated, { 
@@ -52,7 +53,7 @@ export default function WelcomeScreen() {
         
         if (data.session) {
           console.log('Existing session found, redirecting to app');
-          router.replace('/(tabs)');
+          router.replace('(tabs)' as any);
         }
       } catch (e) {
         console.error('Session check failed:', e);
@@ -218,7 +219,7 @@ export default function WelcomeScreen() {
           style={styles.actions}
           entering={FadeInUp.delay(600).duration(800).springify()}
         >
-          <Link href="/login" asChild>
+          <Link href={'login' as ExternalPathString} asChild>
             <TouchableOpacity 
               onPress={handleLoginPress}
               style={styles.loginButton}
@@ -234,7 +235,7 @@ export default function WelcomeScreen() {
             </TouchableOpacity>
           </Link>
 
-          <Link href="/signup" asChild>
+          <Link href={'signup' as ExternalPathString} asChild>
             <TouchableOpacity 
               onPress={handleSignupPress}
               style={styles.signupButton}

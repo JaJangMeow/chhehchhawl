@@ -378,25 +378,32 @@ function CreateTaskScreen() {
   const handleCreateTask = async () => {
     try {
       setLoading(true);
-      console.log("Starting task creation without strict auth checks...");
       
-      // Create a default user ID for tasks if authentication fails
-      // This ensures tasks can always be created
-      const defaultUserId = "00000000-0000-0000-0000-000000000000";
-      
-      // Try to get the user ID but don't fail if not found
-      let userId = defaultUserId;
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (data?.session?.user?.id) {
-          userId = data.session.user.id;
-          console.log("Using authenticated user ID:", userId);
-        } else {
-          console.log("No session found, using default user ID");
-        }
-      } catch (error) {
-        console.log("Error getting session, using default user ID:", error);
+      // Check authentication status before proceeding
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData.session) {
+        // If not authenticated, show an error and redirect to sign in
+        console.error("Authentication error:", sessionError);
+        Alert.alert(
+          "Authentication Required",
+          "You need to be signed in to create a task.",
+          [
+            { 
+              text: "Sign In", 
+              onPress: () => router.replace('/auth/sign-in' as any) 
+            },
+            {
+              text: "Cancel",
+              style: "cancel",
+              onPress: () => setLoading(false)
+            }
+          ]
+        );
+        return;
       }
+      
+      const userId = sessionData.session.user.id;
+      console.log("Using authenticated user ID:", userId);
       
       // Convert skill input to array
       const skillRequirements = skillInputValue
@@ -409,11 +416,11 @@ function CreateTaskScreen() {
         description: formData.description || '',
         budget: Number(formData.budget) || 0,
         deadline: formData.deadline,
-        location: formData.location, // Use the location as-is
-        created_by: userId, // Include user ID directly in payload
+        location: formData.location,
+        created_by: userId,
         metadata: {
           taskVisibilityHours: 48, // Default: 2 days
-          taskCompletionHours: formData.taskCompletionHours || undefined, // Use undefined instead of null
+          taskCompletionHours: formData.taskCompletionHours || undefined,
           estimatedTime: formData.estimatedTime,
           customTime: formData.customTime,
           skillRequirements: skillRequirements,
@@ -430,25 +437,45 @@ function CreateTaskScreen() {
       
       // Create task in database
       console.log("Submitting task with data:", taskPayload);
-      const result = await taskService.createTask(taskPayload);
       
-      console.log("Task created successfully:", result);
-      
-      // Show success message and navigate to home
-      Alert.alert(
-        "Success!",
-        "Your task has been created successfully. View it in your posted tasks.",
-        [
-          { text: "OK", onPress: () => router.replace('/(tabs)' as any) }
-        ]
-      );
+      try {
+        const result = await taskService.createTask(taskPayload);
+        console.log("Task created successfully:", result);
+        
+        // Show success message and navigate to home
+        Alert.alert(
+          "Success!",
+          "Your task has been created successfully. View it in your posted tasks.",
+          [
+            { text: "OK", onPress: () => router.replace('/(tabs)' as any) }
+          ]
+        );
+      } catch (taskError: any) {
+        console.error("Error creating task:", taskError);
+        
+        // Check if it's a permission error
+        if (taskError.message && taskError.message.includes("permission denied")) {
+          Alert.alert(
+            "Permission Error",
+            "There was a problem with permissions. Please try again or contact support.",
+            [{ text: "OK" }]
+          );
+        } else {
+          // Generic error message for other errors
+          Alert.alert(
+            "Error Creating Task",
+            "There was a problem creating your task. Please try again.",
+            [{ text: "OK" }]
+          );
+        }
+      }
     } catch (error: any) {
-      console.error("Error creating task:", error);
+      console.error("Unexpected error in task creation:", error);
       
       // Show a simplified error message
       Alert.alert(
-        "Error Creating Task",
-        "There was a problem creating your task. Please try again.",
+        "Error",
+        "An unexpected error occurred. Please try again later.",
         [{ text: "OK" }]
       );
     } finally {

@@ -7,12 +7,12 @@ import { User } from '@supabase/supabase-js';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Edit, LogOut, Mail, Phone, MapPin, User as UserIcon, Calendar, CreditCard, Camera } from 'lucide-react-native';
+import { Edit, LogOut, Mail, Phone, MapPin, User as UserIcon, Calendar, CreditCard, Camera, ChevronUp, ChevronDown } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import { confirmSignOut } from '@/app/services/authService';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
+import { Ionicons } from '@expo/vector-icons';
 
 interface UserProfile {
   id?: string;
@@ -82,14 +82,46 @@ export default function ProfileScreen() {
     fetchUserData();
   }, []);
 
-  const handleSignOut = () => {
-    // Use the centralized auth service for sign out
-    confirmSignOut(setLoading);
+  const handleSignOut = async () => {
+    try {
+      setLoading(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut();
+      
+      if (error) {
+        throw error;
+      }
+      
+      // Navigate to welcome screen immediately
+      router.replace('/');
+    } catch (error) {
+      console.error('Error during sign out:', error);
+      Alert.alert('Error', 'Failed to sign out. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleEditProfile = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push('/user-information');
+  const confirmSignOut = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Sign Out',
+          onPress: handleSignOut,
+          style: 'destructive'
+        }
+      ]
+    );
   };
 
   const pickImage = async () => {
@@ -256,9 +288,6 @@ export default function ProfileScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Profile</Text>
-        <TouchableOpacity style={styles.editButton} onPress={handleEditProfile}>
-          <Edit size={20} color={Colors.text} />
-        </TouchableOpacity>
       </View>
       
       {loading ? (
@@ -327,11 +356,26 @@ export default function ProfileScreen() {
             <Text style={styles.userName}>
               {profile?.full_name || profile?.first_name || user?.email?.split('@')[0] || 'User'}
             </Text>
+            {profile?.email && (
+              <Text style={styles.userEmail}>{profile.email}</Text>
+            )}
           </View>
           
           {/* Profile Information */}
           <View style={styles.profileSection}>
             <Text style={styles.sectionTitle}>Personal Information</Text>
+            
+            <ProfileItem
+              icon={<UserIcon size={20} color={Colors.textSecondary} />}
+              label="First Name"
+              value={profile?.first_name}
+            />
+            
+            <ProfileItem
+              icon={<UserIcon size={20} color={Colors.textSecondary} />}
+              label="Last Name"
+              value={profile?.last_name}
+            />
             
             <ProfileItem
               icon={<Mail size={20} color={Colors.textSecondary} />}
@@ -386,11 +430,30 @@ export default function ProfileScreen() {
             />
           </View>
           
+          {/* My Tasks Section */}
+          <View style={styles.profileSection}>
+            <Text style={styles.sectionTitle}>My Tasks</Text>
+            
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={() => router.push('/my-posts')}
+            >
+              <View style={styles.actionButtonIcon}>
+                <Ionicons name="list" size={20} color={Colors.primary} />
+              </View>
+              <Text style={styles.actionButtonText}>My Posts</Text>
+              <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          
           {/* Sign Out Button */}
-          <TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
+          <TouchableOpacity onPress={confirmSignOut} style={styles.signOutButton}>
             <LogOut size={20} color={Colors.text} />
             <Text style={styles.signOutText}>Sign Out</Text>
           </TouchableOpacity>
+          
+          {/* Add some white space at the bottom */}
+          <View style={styles.bottomSpacing}></View>
         </ScrollView>
       )}
     </View>
@@ -405,7 +468,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
@@ -415,14 +478,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
-  },
-  editButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -494,6 +549,12 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
+    marginBottom: 4,
+  },
+  userEmail: {
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Regular',
+    color: Colors.textSecondary,
   },
   profileSection: {
     backgroundColor: 'rgba(255,255,255,0.05)',
@@ -552,5 +613,32 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: 'SpaceGrotesk-Bold',
     marginLeft: 12,
+  },
+  actionButton: {
+    backgroundColor: Colors.background,
+    borderRadius: 16,
+    paddingVertical: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  actionButtonIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  actionButtonText: {
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Medium',
+    color: Colors.text,
+    flex: 1,
+  },
+  bottomSpacing: {
+    height: 60,
   },
 });

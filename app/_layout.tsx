@@ -12,6 +12,9 @@ import {
 import { checkSessionStorageHealth, initializeAuth, isAuthenticated } from '@/app/lib/supabase';
 import { ActivityIndicator, View, Text, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { checkIfSetupRequired, setupTaskAcceptanceNotifications } from '@/app/lib/dbSetup';
+import { logger } from '@/app/utils/logger';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // Import the enhanced logging configuration
 import '@/app/utils/logConfig';
@@ -26,6 +29,7 @@ export default function RootLayout() {
 
   const [authInitialized, setAuthInitialized] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [dbSetupComplete, setDbSetupComplete] = useState(false);
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
@@ -95,6 +99,33 @@ export default function RootLayout() {
     initAuth();
   }, []);
 
+  // Check and setup database if needed
+  useEffect(() => {
+    if (authInitialized) {
+      const setupDatabase = async () => {
+        try {
+          // Check if the database needs setup
+          const setupNeeded = await checkIfSetupRequired();
+          
+          if (setupNeeded) {
+            logger.info('Database setup needed, running setup...');
+            await setupTaskAcceptanceNotifications();
+          } else {
+            logger.info('Database already set up correctly');
+          }
+          
+          setDbSetupComplete(true);
+        } catch (error) {
+          logger.error('Error during database setup check:', error);
+          // Continue anyway to not block app startup
+          setDbSetupComplete(true);
+        }
+      };
+      
+      setupDatabase();
+    }
+  }, [authInitialized]);
+
   // Display auth error if any
   useEffect(() => {
     if (authError) {
@@ -108,7 +139,7 @@ export default function RootLayout() {
   }
 
   // Wait until auth is initialized before rendering the app
-  if (!authInitialized) {
+  if (!authInitialized || !dbSetupComplete) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#4285F4" />
@@ -118,14 +149,18 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="signup" />
+        <Stack.Screen name="user-information" options={{ 
+          headerShown: false,
+          gestureEnabled: false, // Disable swipe back gesture
+        }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="light" />
-    </>
+    </GestureHandlerRootView>
   );
 }

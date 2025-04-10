@@ -6,6 +6,7 @@ export const Colors = {
   
   // Background colors
   background: '#1E1E1E',  // Dark background
+  backgroundMuted: '#1A1A1A', // Muted background for status containers
   border: '#2D2D2D',      // Borders and input backgrounds
   cardBackground: '#252525', // Background for cards (slightly lighter than main background)
   tabBarBackground: '#1A1A1A', // Tab bar background
@@ -18,6 +19,8 @@ export const Colors = {
   error: '#E53935',       // Error messages
   success: '#4CAF50',     // Success messages
   warning: '#FF9800',     // Warning messages
+  danger: '#FF5252',      // Danger/Alert color
+  gray: '#707070',        // Gray color for neutral states
   
   // Miscellaneous
   overlay: 'rgba(0, 0, 0, 0.5)', // Overlay for modals
@@ -28,6 +31,7 @@ export const Colors = {
   light: {
     primary: '#FF1B5E',
     background: '#1E1E1E',
+    backgroundMuted: '#1A1A1A',
     border: '#2D2D2D',
     cardBackground: '#252525',
     tabBarBackground: '#1A1A1A',
@@ -36,6 +40,8 @@ export const Colors = {
     error: '#E53935',
     success: '#4CAF50',
     warning: '#FF9800',
+    danger: '#FF5252',
+    gray: '#707070',
     overlay: 'rgba(0, 0, 0, 0.5)',
     highlight: '#FF1B5E20',
     white: '#FFFFFF',

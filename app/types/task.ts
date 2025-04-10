@@ -3,7 +3,7 @@
  */
 
 // Basic task types
-export type TaskStatus = 'pending' | 'assigned' | 'completed' | 'canceled' | 'public';
+export type TaskStatus = 'pending' | 'open' | 'assigned' | 'finished' | 'confirmed_complete' | 'completed' | 'canceled' | 'public';
 export type TaskCategory = string;
 export type TaskUrgency = 'low' | 'medium' | 'high';
 
@@ -19,32 +19,46 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-  created_by: string;
-  assigned_to?: string;
   status: TaskStatus;
-  category: TaskCategory;
-  urgency: TaskUrgency;
-  budget: number;
-  location: Location;
+  price?: number;
+  budget?: number;
   created_at: string;
-  updated_at: string;
-  distance?: number;
-  // Additional properties
-  categories?: string[];
-  urgent?: boolean;
-  priority?: 'low' | 'medium' | 'high';
+  updated_at?: string;
   deadline?: string;
+  completion_date?: string;
+  assigned_at?: string;
   estimated_time?: number;
-  skill_requirements?: string[];
-  payment_method?: string;
-  task_visibility_hours?: number;
+  custom_time?: string;
   task_completion_hours?: number;
-  task_photos?: string[];
+  created_by: string;
+  assigned_to?: string | null;
+  client_profile?: any;
+  provider_profile?: any;
+  location?: {
+    address?: string;
+    lat?: number;
+    lng?: number;
+    display_name?: string;
+  };
   building_name?: string;
+  locality?: string;
   coordinates?: {
     latitude: number;
     longitude: number;
   };
+  distance?: number;
+  category?: string;
+  categories?: string[];
+  priority?: TaskPriority;
+  urgent?: boolean;
+  skill_requirements?: string[];
+  context_flags?: {
+    [key: string]: any;
+  };
+  payment_method?: string;
+  task_photos?: string[];
+  task_visibility_hours?: number;
+  has_pending_acceptances?: boolean;
 }
 
 // Payload for creating new tasks
@@ -87,6 +101,7 @@ export class TaskModel implements Task {
   category: TaskCategory = '';
   urgency: TaskUrgency = 'medium';
   budget: number = 0;
+  price?: number;
   location: Location = { lat: 0, lng: 0 };
   created_at: string = '';
   updated_at: string = '';
@@ -103,6 +118,16 @@ export class TaskModel implements Task {
   task_photos?: string[] = [];
   building_name?: string;
   coordinates?: { latitude: number; longitude: number };
+  completion_date?: string;
+  assigned_at?: string;
+  custom_time?: string;
+  client_profile?: any;
+  provider_profile?: any;
+  locality?: string;
+  context_flags?: {
+    [key: string]: any;
+  };
+  has_pending_acceptances?: boolean;
   
   constructor(data?: Partial<Task>) {
     if (data) {

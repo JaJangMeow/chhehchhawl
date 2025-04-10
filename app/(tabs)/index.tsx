@@ -11,7 +11,7 @@ import Animated, {
 import { ListIcon, PlusIcon, MessageCircle, ChevronDown, Bell, X } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { fetchUserProfile } from '@/app/services/userService';
+import { fetchUserProfile, updateUserProfile } from '@/app/services/userService';
 import ActionCard from '@/app/components/home/ActionCard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -101,11 +101,12 @@ export default function HomeScreen() {
   const [userName, setUserName] = useState('User');
   const [userAvatar, setUserAvatar] = useState('');
   const [isLearnMoreExpanded, setIsLearnMoreExpanded] = useState(false);
-  const [isAppNameVisible, setIsAppNameVisible] = useState(true);
+  const [isAppNameVisible, setIsAppNameVisible] = useState(false);
   const [taskStatsVisible, setTaskStatsVisible] = useState(false);
   const [taskCounts, setTaskCounts] = useState({ posted: 0, taken: 0 });
   const [taskStatsLoading, setTaskStatsLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
   const insets = useSafeAreaInsets();
   
   // Use our custom hooks for animations
@@ -132,24 +133,83 @@ export default function HomeScreen() {
   // Memoize load profile function
   const loadUserProfile = useCallback(async () => {
     try {
+      console.log('Loading user profile...');
       const userProfile = await fetchUserProfile();
-      if (userProfile.first_name) {
-        // Extract only the first name in case first_name contains multiple names
-        const firstName = userProfile.first_name.split(' ')[0];
+      console.log('User profile data:', JSON.stringify(userProfile, null, 2));
+      
+      // Always prioritize first_name from the profile
+      if (userProfile.first_name && userProfile.first_name.trim()) {
+        console.log('Setting name from first_name:', userProfile.first_name);
+        setUserName(userProfile.first_name.trim());
+      } else if (userProfile.full_name && userProfile.full_name.trim()) {
+        // Get first word from full name as first name
+        const firstName = userProfile.full_name.split(' ')[0];
+        console.log('Setting name from full_name:', firstName);
         setUserName(firstName);
+      } else if (userProfile.email) {
+        // Last resort - derive from email
+        const emailName = userProfile.email.split('@')[0];
+        const formattedName = emailName
+          .split(/[._-]/)
+          .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+          .join(' ');
+        console.log('Setting name from email:', formattedName);
+        setUserName(formattedName);
+        
+        // Since we had to use the email name as fallback, let's try to update the profile
+        // with this name to ensure consistency in the future
+        supabase.auth.getUser().then(({ data: { user } }) => {
+          if (user) {
+            console.log('Updating profile with derived name from email');
+            updateUserProfile({
+              id: user.id,
+              first_name: formattedName,
+              full_name: formattedName
+            }).then(updatedProfile => {
+              console.log('Profile updated with derived name:', updatedProfile);
+            });
+          }
+        });
       }
+      
       // Set the user avatar if available
       if (userProfile.avatar_url) {
-        // Use the clean URL without cache busting
-        setUserAvatar(userProfile.avatar_url);
+        // Ensure the avatar URL is always fresh by adding a cache-busting param
+        const cacheBuster = new Date().getTime();
+        const avatarUrl = userProfile.avatar_url.includes('?') 
+          ? `${userProfile.avatar_url}&cb=${cacheBuster}`
+          : `${userProfile.avatar_url}?cb=${cacheBuster}`;
+        setUserAvatar(avatarUrl);
       }
+      
       // Store the user ID for task counting
       if (userProfile.id) {
         setUserId(userProfile.id);
       }
     } catch (error) {
       console.error('Error loading user profile:', error);
+    } finally {
+      setIsFirstLoad(false);
     }
+  }, []);
+  
+  // Run a one-time sync of all user profiles to ensure data is up to date
+  useEffect(() => {
+    const syncUserProfiles = async () => {
+      try {
+        console.log('Running one-time sync of user profiles');
+        const { error } = await supabase.rpc('sync_user_metadata_to_profile');
+        if (error) {
+          console.error('Error syncing user profiles:', error);
+        } else {
+          console.log('User profiles synced successfully');
+        }
+      } catch (error) {
+        console.error('Error in profile sync:', error);
+      }
+    };
+    
+    syncUserProfiles();
   }, []);
   
   // Load user data when the component mounts
@@ -158,10 +218,11 @@ export default function HomeScreen() {
     triggerAllCardAnimations();
   }, []);
   
-  // Refresh user avatar when screen is focused
+  // Refresh user profile whenever the screen comes into focus
   useFocusEffect(
     useCallback(() => {
       // This will run when the screen is focused
+      console.log('Screen focused, refreshing user profile');
       loadUserProfile();
       return () => {
         // This will run when the screen is unfocused
@@ -190,7 +251,7 @@ export default function HomeScreen() {
   }, [userId]);
   
   // Enhanced card press handler
-  const handleCardPress = useCallback((route: any) => {
+  const handleCardPress = useCallback((route: string) => {
     // Provide stronger haptic feedback for a more satisfying click
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     
@@ -199,7 +260,7 @@ export default function HomeScreen() {
       // This allows the card animations to play before navigating away
       setTimeout(() => {
         // Navigate to the appropriate screen
-        router.push(route);
+        router.push(route as any);
       }, 100);
     } catch (error) {
       console.error('Navigation error:', error);
@@ -307,6 +368,8 @@ export default function HomeScreen() {
           <TouchableOpacity 
             style={styles.avatarContainer}
             onPress={handleAvatarPress}
+            accessibilityLabel="View your task statistics"
+            accessibilityHint="Shows your posted and taken tasks"
           >
             {userAvatar ? (
               <Image
@@ -359,6 +422,8 @@ export default function HomeScreen() {
               style={styles.notificationButton}
               onPress={handleNotification}
               hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+              accessibilityLabel="Notifications"
+              accessibilityRole="button"
             >
               <Bell size={24} color={Colors.text} strokeWidth={2.2} />
               <NotificationBadge />
@@ -367,9 +432,11 @@ export default function HomeScreen() {
             {/* App Logo */}
             <TouchableOpacity 
               style={styles.logoContainer}
-              onPress={!isAppNameVisible ? toggleAppName : undefined}
-              activeOpacity={!isAppNameVisible ? 0.7 : 1}
+              onPress={toggleAppName}
+              activeOpacity={0.7}
               hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+              accessibilityLabel="Toggle app name visibility"
+              accessibilityRole="button"
             >
               <Image
                 source={require('../../assets/images/logo.png')}
@@ -410,7 +477,7 @@ export default function HomeScreen() {
           title="Find Task"
           description="Browse available tasks near you"
           icon={<ListIcon size={30} color={Colors.text} />}
-          onPress={() => handleCardPress('/(tabs)/tasks')}
+          onPress={() => handleCardPress("/tasks")}
           scaleValue={findTaskScale}
           shineValue={findTaskShine}
           glowValue={findTaskGlow}
@@ -422,7 +489,7 @@ export default function HomeScreen() {
           title="Post Task"
           description="Create a new task for helpers"
           icon={<PlusIcon size={30} color={Colors.text} />}
-          onPress={() => handleCardPress('/(app)/create-task')}
+          onPress={() => handleCardPress("/create-task")}
           scaleValue={postTaskScale}
           shineValue={postTaskShine}
           glowValue={postTaskGlow}
@@ -434,7 +501,7 @@ export default function HomeScreen() {
           title="Chat"
           description="Message your task contacts"
           icon={<MessageCircle size={30} color={Colors.text} />}
-          onPress={() => handleCardPress('/(tabs)/chat')}
+          onPress={() => handleCardPress("/chat")}
           scaleValue={chatScale}
           shineValue={chatShine}
           glowValue={chatGlow}
@@ -447,6 +514,9 @@ export default function HomeScreen() {
             style={styles.learnMoreHeader}
             onPress={handleLearnMoreToggle}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Learn more about ChhehChhawL"
+            accessibilityHint="Expands to show more information about the app"
           >
             <Text style={styles.learnMoreTitle}>Learn more</Text>
             <WrappedAnimatedView

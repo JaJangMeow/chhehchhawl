@@ -13,33 +13,27 @@ import { Task } from '../../types/task';
 import Colors from '../../constants/Colors';
 import { MapPin, Navigation } from 'lucide-react-native';
 
+// Define a type alias for the filter options
+type TaskFilters = {
+  status: string[];
+  category: string[];
+  urgency: boolean | null;
+  minBudget: number | null;
+  maxBudget: number | null;
+  maxDistance: number | null;
+  minDistance: number | null;
+  distanceRange: string | null;
+};
+
 interface FilterModalProps {
   visible: boolean;
   tasks: Task[];
-  filters: {
-    status: string[];
-    category: string[];
-    urgency: boolean | null;
-    minBudget: number | null;
-    maxBudget: number | null;
-    maxDistance: number | null;
-    minDistance: number | null;
-    distanceRange: string | null;
-  };
-  tempFilters: {
-    status: string[];
-    category: string[];
-    urgency: boolean | null;
-    minBudget: number | null;
-    maxBudget: number | null;
-    maxDistance: number | null;
-    minDistance: number | null;
-    distanceRange: string | null;
-  };
+  filters: TaskFilters;
+  tempFilters: TaskFilters;
   onClose: () => void;
-  onApplyFilters: (filters: typeof tempFilters) => void;
+  onApplyFilters: (filters: TaskFilters) => void;
   onResetFilters: () => void;
-  setTempFilters: React.Dispatch<React.SetStateAction<typeof tempFilters>>;
+  setTempFilters: React.Dispatch<React.SetStateAction<TaskFilters>>;
 }
 
 const FilterModal: React.FC<FilterModalProps> = ({ 

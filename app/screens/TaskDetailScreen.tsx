@@ -9,22 +9,27 @@ import {
   Alert,
   Image,
   useWindowDimensions,
-  Platform
+  Platform,
+  TextInput
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import * as Linking from 'expo-linking';
-import { chatService } from '../services/chatService';
 import * as Haptics from 'expo-haptics';
+import Toast from 'react-native-toast-message';
 
 import { taskService } from '../services/taskService';
-import { Task } from '../types/task';
+import { taskAcceptanceService } from '../services/taskAcceptanceService';
+import { chatService } from '../services/chatService';
+import { Task, TaskStatus } from '../types/task';
 import { EmptyState } from '../components/shared/EmptyState';
 import Colors from '../constants/Colors';
 import { logger } from '../utils/logger';
-import { MapPin, Calendar, IndianRupee, Tag, AlertCircle, Star, Clock, Building2, User, CreditCard, Wrench, Info, Navigation } from 'lucide-react-native';
+import { MapPin, Calendar, IndianRupee, Tag, AlertCircle, Star, Clock, Building2, User, CreditCard, Wrench, Info, Navigation, ChevronDown, ChevronUp, UserCheck } from 'lucide-react-native';
 import { supabase } from '../lib/supabase';
+import AcceptancesList from '../components/tasks/AcceptancesList';
+import AcceptTaskButton from '@/app/components/tasks/AcceptTaskButton';
 
 export default function TaskDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,6 +40,12 @@ export default function TaskDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
+  const [isTaskOwner, setIsTaskOwner] = useState(false);
+  const [showAcceptances, setShowAcceptances] = useState(false);
+  const [hasAcceptances, setHasAcceptances] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
+  const [applicationMessage, setApplicationMessage] = useState('');
+  const [isUserTaskOwner, setIsUserTaskOwner] = useState(false);
 
   useEffect(() => {
     const fetchTask = async () => {
@@ -50,6 +61,13 @@ export default function TaskDetailScreen() {
           setError('Task not found');
         } else {
           setTask(fetchedTask);
+          
+          // Check if current user is the task owner
+          const userId = await supabase.auth.getUser();
+          setIsTaskOwner(userId.data.user?.id === fetchedTask.created_by);
+          
+          // Check if task has pending acceptances
+          setHasAcceptances(!!fetchedTask.has_pending_acceptances);
         }
       } catch (err: any) {
         logger.error('Error fetching task:', err);
@@ -61,6 +79,25 @@ export default function TaskDetailScreen() {
 
     fetchTask();
   }, [id]);
+
+  useEffect(() => {
+    const checkTaskOwnership = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user && task?.created_by === user.id) {
+          setIsUserTaskOwner(true);
+        } else {
+          setIsUserTaskOwner(false);
+        }
+      } catch (error) {
+        logger.error('Error checking task ownership:', error);
+      }
+    };
+    
+    if (task) {
+      checkTaskOwnership();
+    }
+  }, [task]);
 
   // Format date for display
   const formatDate = (dateString?: string) => {
@@ -77,43 +114,26 @@ export default function TaskDetailScreen() {
     router.back();
   };
 
-  // Handle apply for task
-  const handleApply = async () => {
-    if (!task) return;
+  // Toggle acceptances panel
+  const toggleAcceptances = () => {
+    setShowAcceptances(!showAcceptances);
+  };
 
-    Alert.alert(
-      'Apply for Task',
-      'Are you sure you want to apply for this task?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Apply', 
-          onPress: async () => {
-            try {
-              // Provide haptic feedback
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              
-              // Set loading state
-              setAccepting(true);
-              
-              // Accept the task - this will handle authentication checking, conversation creation and navigation
-              await taskService.acceptTask(task.id);
-              
-              // Task acceptance result is now handled inside the taskService.acceptTask method
-              // including the alerts and redirection to chat
-            } catch (err: any) {
-              // Show error message only if it's not already handled in the acceptTask method
-              if (err.message && !err.message.includes('own task') && !err.message.includes('not available')) {
-                Alert.alert('Error', err.message || 'Failed to accept task. Please try again.');
-              }
-              logger.error('Error accepting task:', err);
-            } finally {
-              setAccepting(false);
-            }
-          } 
-        },
-      ]
-    );
+  // Handle task refresh when acceptance status changes
+  const handleAcceptanceUpdate = async () => {
+    try {
+      if (!id) return;
+      
+      const refreshedTask = await taskService.getTaskById(id);
+      if (refreshedTask) {
+        setTask(refreshedTask);
+        
+        // Update pending acceptances flag
+        setHasAcceptances(!!refreshedTask.has_pending_acceptances);
+      }
+    } catch (err) {
+      logger.error('Error refreshing task:', err);
+    }
   };
 
   // Add this function to handle opening maps
@@ -142,6 +162,33 @@ export default function TaskDetailScreen() {
         console.error('Error opening maps:', error);
         Alert.alert('Error', 'Could not open maps application');
       });
+  };
+
+  // Add a function to handle applying for a task
+  const handleApplyForTask = async () => {
+    if (!task) return;
+    
+    try {
+      setIsApplying(true);
+      
+      const result = await taskAcceptanceService.acceptTask(task.id, applicationMessage);
+      
+      if (result.success) {
+        Alert.alert(
+          'Application Submitted',
+          'Your application has been submitted successfully. The task owner will be notified.',
+          [{ text: 'OK' }]
+        );
+        setApplicationMessage('');
+      } else {
+        Alert.alert('Error', result.message || 'Failed to apply for task');
+      }
+    } catch (error) {
+      logger.error('Error applying for task:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } finally {
+      setIsApplying(false);
+    }
   };
 
   if (loading) {
@@ -207,7 +254,7 @@ export default function TaskDetailScreen() {
             </View>
           )}
         </View>
-        <Text style={styles.budget}>₹{task.budget.toLocaleString('en-IN')}</Text>
+        <Text style={styles.budget}>₹{(task?.budget || 0).toLocaleString('en-IN')}</Text>
       </View>
 
       {/* Status and Category */}
@@ -237,6 +284,40 @@ export default function TaskDetailScreen() {
           </View>
         )}
       </View>
+
+      {/* Task Acceptances Panel (only for task owner) */}
+      {isTaskOwner && (
+        <View style={styles.acceptancesPanel}>
+          <TouchableOpacity 
+            style={styles.acceptancesHeader} 
+            onPress={toggleAcceptances}
+          >
+            <View style={styles.acceptancesInfo}>
+              <UserCheck size={18} color={Colors.primary} />
+              <Text style={styles.acceptancesTitle}>Task Applications</Text>
+              {hasAcceptances && (
+                <View style={styles.pendingBadge}>
+                  <Text style={styles.pendingBadgeText}>Pending</Text>
+                </View>
+              )}
+            </View>
+            {showAcceptances ? (
+              <ChevronUp size={18} color={Colors.textSecondary} />
+            ) : (
+              <ChevronDown size={18} color={Colors.textSecondary} />
+            )}
+          </TouchableOpacity>
+          
+          {showAcceptances && (
+            <View style={styles.acceptancesContent}>
+              <AcceptancesList 
+                taskId={task.id} 
+                isOwner={true}
+              />
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Description */}
       <View style={styles.section}>
@@ -394,24 +475,50 @@ export default function TaskDetailScreen() {
         </View>
       </View>
 
-      {/* Apply Button */}
-      <TouchableOpacity 
-        style={[
-          styles.applyButton, 
-          accepting && styles.applyButtonDisabled,
-          task.status !== 'pending' && styles.applyButtonDisabled
-        ]} 
-        onPress={handleApply}
-        disabled={accepting || task.status !== 'pending'}
-      >
-        {accepting ? (
-          <ActivityIndicator color="#fff" size="small" />
-        ) : (
-          <Text style={styles.applyButtonText}>
-            {task.status === 'pending' ? 'Apply for this Task' : 'This Task is Already Assigned'}
-          </Text>
-        )}
-      </TouchableOpacity>
+      {/* Apply Button - only show for non-owners */}
+      {!isTaskOwner && (
+        <AcceptTaskButton 
+          taskId={task.id}
+          onSuccess={(conversationId) => {
+            if (conversationId) {
+              router.push(`/chat/${conversationId}`);
+            } else {
+              Toast.show({
+                type: 'success',
+                text1: 'Task application sent!',
+                text2: 'The task owner will review your application soon.'
+              });
+            }
+          }}
+        />
+      )}
+
+      {/* Acceptances Section */}
+      {isUserTaskOwner && (
+        <View style={styles.acceptancesSection}>
+          <TouchableOpacity
+            style={styles.acceptancesToggleButton}
+            onPress={toggleAcceptances}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.acceptancesToggleText}>
+              {showAcceptances ? 'Hide Applications' : 'View Applications'}
+            </Text>
+            {showAcceptances ? (
+              <ChevronUp size={20} color={Colors.primary} />
+            ) : (
+              <ChevronDown size={20} color={Colors.primary} />
+            )}
+          </TouchableOpacity>
+          
+          {showAcceptances && task && (
+            <AcceptancesList
+              taskId={task.id}
+              isOwner={true}
+            />
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -648,6 +755,101 @@ const styles = StyleSheet.create({
   },
   detailTexts: {
     flex: 1,
+  },
+  acceptancesPanel: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    overflow: 'hidden',
+  },
+  acceptancesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+  },
+  acceptancesInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  acceptancesTitle: {
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Medium',
+    color: Colors.text,
+  },
+  acceptancesContent: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+    maxHeight: 400,
+  },
+  pendingBadge: {
+    backgroundColor: 'rgba(255, 167, 38, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  pendingBadgeText: {
+    fontSize: 12,
+    fontFamily: 'SpaceGrotesk-Medium',
+    color: '#FFA726',
+  },
+  acceptancesSection: {
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+    paddingTop: 16,
+  },
+  acceptancesToggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  acceptancesToggleText: {
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Medium',
+    color: Colors.primary,
+  },
+  applicationSection: {
+    marginTop: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  applicationTitle: {
+    fontSize: 18,
+    fontFamily: 'SpaceGrotesk-Bold',
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  applicationInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+    padding: 12,
+    color: Colors.text,
+    fontFamily: 'SpaceGrotesk-Regular',
+    fontSize: 16,
+    minHeight: 100,
+    textAlignVertical: 'top',
+    marginBottom: 16,
+  },
+  applicationButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  applicationButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Medium',
   },
 }); 
 

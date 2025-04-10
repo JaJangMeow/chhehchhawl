@@ -8,9 +8,10 @@ interface TermsCheckboxProps {
   accepted: boolean;
   onToggle: (value: boolean) => void;
   delay?: number;
+  error?: string;
 }
 
-export default function TermsCheckbox({ accepted, onToggle, delay = 0 }: TermsCheckboxProps) {
+export default function TermsCheckbox({ accepted, onToggle, delay = 0, error }: TermsCheckboxProps) {
   const checkboxScale = useSharedValue(1);
   
   const checkboxAnimatedStyle = useAnimatedStyle(() => {
@@ -56,16 +57,21 @@ export default function TermsCheckbox({ accepted, onToggle, delay = 0 }: TermsCh
             style={[
               styles.checkbox, 
               accepted && styles.checkboxChecked,
+              error && styles.checkboxError,
               checkboxAnimatedStyle
             ]}
           >
             {accepted && <Check size={16} color={Colors.text} />}
           </Animated.View>
         </View>
-        <Text style={styles.termsText}>
+        <Text style={[styles.termsText, error && styles.errorText]}>
           I accept the Terms & Conditions
         </Text>
       </TouchableOpacity>
+      
+      {error && (
+        <Text style={styles.errorMessage}>{error}</Text>
+      )}
     </Animated.View>
   );
 }
@@ -75,6 +81,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    marginBottom: 4,
   },
   checkboxWrapper: {
     width: 24,
@@ -95,9 +102,24 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderColor: Colors.primary,
   },
+  checkboxError: {
+    borderColor: Colors.error,
+    borderWidth: 2,
+  },
   termsText: {
     color: Colors.text,
     fontSize: 16,
     fontFamily: 'SpaceGrotesk-Regular',
   },
+  errorText: {
+    color: Colors.error,
+  },
+  errorMessage: {
+    color: Colors.error,
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 36,
+    fontFamily: 'SpaceGrotesk-Regular',
+    marginBottom: 8,
+  }
 }); 

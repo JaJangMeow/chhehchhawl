@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, ScrollView, Image } from 'react-native';
 import { Stack, useLocalSearchParams, router } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { taskService } from '../../services/taskService';
 import { Task } from '../../types/task';
-import { MapPin, Calendar, IndianRupee, Clock, Tag, AlertCircle, Star } from 'lucide-react-native';
+import { MapPin, Calendar, IndianRupee, Clock, Tag, AlertCircle, Star, User } from 'lucide-react-native';
 import Button from '../../components/shared/Button';
 import { getUrgencyColor } from '../../utils/taskUtils';
+import { supabase } from '@/app/lib/supabase';
 
 // Available task categories
 const TASK_CATEGORIES = {
@@ -25,14 +26,41 @@ const TASK_PRIORITIES = {
   'high': { label: 'High', color: '#F44336' }
 };
 
+interface UserProfile {
+  id: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  avatar_url?: string;
+  email?: string;
+  phone?: string;
+  updated_at?: string;
+}
+
 export default function TaskDetailScreen() {
   const { id } = useLocalSearchParams();
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [involvedUser, setInvolvedUser] = useState<UserProfile | null>(null);
+  const [userRole, setUserRole] = useState<'owner' | 'assigned' | null>(null);
+  const [loadingUser, setLoadingUser] = useState(false);
 
   useEffect(() => {
-    loadTask();
+    // First get the current user ID
+    const fetchCurrentUser = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.user?.id) {
+          setCurrentUserId(data.session.user.id);
+        }
+      } catch (error) {
+        console.error('Error fetching current user:', error);
+      }
+    };
+    
+    fetchCurrentUser().then(() => loadTask());
   }, [id]);
 
   const loadTask = async () => {
@@ -46,12 +74,45 @@ export default function TaskDetailScreen() {
       setLoading(true);
       const taskData = await taskService.getTaskById(id as string);
       setTask(taskData);
+      
+      // Determine user role and fetch the other involved user
+      if (currentUserId) {
+        if (taskData.created_by === currentUserId) {
+          setUserRole('owner');
+          if (taskData.assigned_to) {
+            await fetchUserProfile(taskData.assigned_to);
+          }
+        } else if (taskData.assigned_to === currentUserId) {
+          setUserRole('assigned');
+          await fetchUserProfile(taskData.created_by);
+        }
+      }
+      
       setError(null);
     } catch (err) {
       console.error('Error loading task:', err);
       setError('Failed to load task details');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchUserProfile = async (userId: string) => {
+    try {
+      setLoadingUser(true);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name, full_name, avatar_url, email, phone, updated_at')
+        .eq('id', userId)
+        .single();
+        
+      if (error) throw error;
+      
+      setInvolvedUser(data);
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+    } finally {
+      setLoadingUser(false);
     }
   };
 
@@ -98,6 +159,21 @@ export default function TaskDetailScreen() {
   // Get priority data
   const getPriorityData = (priorityId: string) => {
     return TASK_PRIORITIES[priorityId as keyof typeof TASK_PRIORITIES] || TASK_PRIORITIES.medium;
+  };
+
+  // Get formatted user name
+  const getFormattedUserName = (user: UserProfile | null) => {
+    if (!user) return 'Unknown User';
+    
+    if (user.full_name) return user.full_name;
+    
+    if (user.first_name && user.last_name) {
+      return `${user.first_name} ${user.last_name}`;
+    }
+    
+    if (user.first_name) return user.first_name;
+    
+    return 'Unknown User';
   };
 
   if (loading) {
@@ -178,6 +254,44 @@ export default function TaskDetailScreen() {
           </Text>
         </View>
 
+        {/* User information section */}
+        {task.status === 'completed' && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              {userRole === 'owner' ? 'Completed By' : 'Completed For'}
+            </Text>
+            
+            {loadingUser ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <View style={styles.userInfoContainer}>
+                <View style={styles.avatarContainer}>
+                  {involvedUser?.avatar_url ? (
+                    <Image 
+                      source={{ uri: involvedUser.avatar_url }} 
+                      style={styles.userAvatar} 
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={styles.userAvatarPlaceholder}>
+                      <User size={20} color={Colors.textSecondary} />
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.userDetailsContainer}>
+                  <Text style={styles.userName}>
+                    {getFormattedUserName(involvedUser)}
+                  </Text>
+                  {involvedUser?.email && (
+                    <Text style={styles.userEmail}>{involvedUser.email}</Text>
+                  )}
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Budget</Text>
           <View style={styles.infoRow}>
@@ -211,15 +325,17 @@ export default function TaskDetailScreen() {
           </View>
         </View>
 
-        <View style={styles.actions}>
-          <Button 
-            title="Apply for Task" 
-            onPress={() => {
-              Alert.alert('Coming Soon', 'This feature is under development');
-            }}
-            style={styles.mainButton}
-          />
-        </View>
+        {task.completion_date && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Completed At</Text>
+            <View style={styles.infoRow}>
+              <Clock size={20} color={Colors.text} />
+              <Text style={styles.infoValue}>
+                {formatDate(task.completion_date)}
+              </Text>
+            </View>
+          </View>
+        )}
       </ScrollView>
     </>
   );
@@ -251,80 +367,120 @@ const styles = StyleSheet.create({
     color: Colors.error,
     fontSize: 16,
     textAlign: 'center',
+    marginBottom: 10,
     fontFamily: 'SpaceGrotesk-Medium',
   },
   header: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   statusBadge: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
   },
   statusText: {
     fontSize: 14,
     fontFamily: 'SpaceGrotesk-Medium',
   },
   metadataSection: {
-    marginBottom: 24,
-    gap: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 20,
   },
   metadataItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    padding: 12,
+    gap: 6,
+    backgroundColor: Colors.cardBackground,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   metadataText: {
-    fontSize: 16,
+    fontSize: 14,
     fontFamily: 'SpaceGrotesk-Medium',
-    color: Colors.textSecondary,
+    color: Colors.text,
   },
   section: {
-    marginBottom: 24,
+    marginBottom: 20,
     backgroundColor: Colors.cardBackground,
-    borderRadius: 12,
     padding: 16,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: Colors.border,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   description: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: 'SpaceGrotesk-Regular',
-    color: Colors.textSecondary,
-    lineHeight: 24,
+    color: Colors.text,
+    lineHeight: 22,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
   infoValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: 'SpaceGrotesk-Regular',
     color: Colors.text,
-    marginLeft: 12,
   },
   actions: {
-    marginTop: 16,
+    marginTop: 20,
   },
   mainButton: {
-    marginBottom: 16,
-  }
+    marginBottom: 10,
+  },
+  userInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  avatarContainer: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    overflow: 'hidden',
+    backgroundColor: Colors.cardBackground,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  userAvatar: {
+    width: '100%',
+    height: '100%',
+  },
+  userAvatarPlaceholder: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.cardBackground,
+  },
+  userDetailsContainer: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Bold',
+    color: Colors.text,
+  },
+  userEmail: {
+    fontSize: 14,
+    fontFamily: 'SpaceGrotesk-Regular',
+    color: Colors.textSecondary,
+  },
 }); 

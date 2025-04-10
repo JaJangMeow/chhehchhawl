@@ -1,5 +1,5 @@
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
-import { useState, useEffect, useRef } from 'react';
 import { Colors } from '@/app/constants/Colors';
 import { MapPin, Search, X, Locate } from 'lucide-react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';

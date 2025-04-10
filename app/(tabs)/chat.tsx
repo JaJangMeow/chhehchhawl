@@ -9,27 +9,52 @@ import {
   ActivityIndicator, 
   RefreshControl,
   Alert,
-  Button
+  Button,
+  SectionList,
+  Platform,
+  SafeAreaView
 } from 'react-native';
 import { Colors } from '@/app/constants/Colors';
-import { chatService, Conversation } from '@/app/services/chatService';
+import { chatService, Conversation, TaskConversation } from '@/app/services/chatService';
 import { formatPrice } from '@/app/utils/formatters';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { getStatusColor } from '@/app/utils/taskUtils';
 import { format, isToday, isYesterday } from 'date-fns';
-import { MessageSquare, UserCircle } from 'lucide-react-native';
+import { MessageSquare, UserCircle, Bell, CheckCircle, ClipboardList, Briefcase, Users, Clock } from 'lucide-react-native';
 import { EmptyState } from '@/app/components/shared/EmptyState';
 import { isAuthenticated, getUserId, supabase, initializeAuth } from '@/app/lib/supabase';
+import PendingAcceptancesSection from '@/app/components/chat/PendingAcceptancesSection';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-export default function ChatScreen() {
+// Ensure text strings are safely rendered with a Text component
+const SafeText = ({ children }: { children?: React.ReactNode }) => {
+  if (typeof children === 'string') {
+    return <Text>{children}</Text>;
+  }
+  return <>{children}</>;
+};
+
+// Define section types
+interface ConversationSection {
+  title: string;
+  data: TaskConversation[];
+  type: 'toAssign' | 'toDo' | 'applications';
+  icon: React.ReactNode;
+}
+
+function ChatScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [tasksIDo, setTasksIDo] = useState<TaskConversation[]>([]);
+  const [tasksIAssign, setTasksIAssign] = useState<TaskConversation[]>([]);
+  const [sections, setSections] = useState<ConversationSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
-  const [authError, setAuthError] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [taskConversations, setTaskConversations] = useState<TaskConversation[]>([]);
   
   // First load - ensure auth is initialized
   useEffect(() => {
@@ -45,11 +70,11 @@ export default function ChatScreen() {
         if (isAuth) {
           console.log('User is authenticated, preloading conversations');
           setAuthChecking(false);
-          loadConversations();
+          loadTaskConversations();
         } else {
           console.log('User is not authenticated');
           setAuthChecking(false);
-          setAuthError(true);
+          setAuthError('You need to be logged in to view your conversations.');
         }
       } catch (err) {
         console.error('Failed to initialize auth in chat screen:', err);
@@ -86,24 +111,23 @@ export default function ChatScreen() {
           
           if (!authStatus) {
             console.log('User not authenticated, showing login options');
-            setAuthError(true);
+            setAuthError('Failed to verify authentication. Please try again.');
             return;
           } else {
             // User is authenticated, clear any auth errors
-            setAuthError(false);
+            setAuthError(null);
           }
           
-          // If conversations are already loaded, only reload if requested via conversationId param
-          if (conversations.length > 0 && !params.conversationId) {
-            console.log('Conversations already loaded, skipping reload');
-          } else {
-            // Load conversations
-            await loadConversations();
-          }
+          // Load conversations
+          await loadTaskConversations();
           
           // If we have a conversationId param, navigate to that conversation
-          if (params.conversationId) {
-            handleOpenConversation(params.conversationId as string);
+          // But only if it's a normal conversation ID, not an application
+          // We need to fetch the conversation first to check its type
+          if (params.conversationId && typeof params.conversationId === 'string') {
+            // Avoid navigating directly here, let the user tap the conversation
+            // handleOpenConversation(params.conversationId as string); 
+            // ^^^ Remove this line to prevent type error
           }
         } catch (err) {
           console.error('Error in checkAuthAndLoad:', err);
@@ -112,7 +136,7 @@ export default function ChatScreen() {
       };
       
       checkAuthAndLoad();
-    }, [params.conversationId, conversations.length])
+    }, [params.conversationId])
   );
   
   const handleLogin = () => {
@@ -123,7 +147,7 @@ export default function ChatScreen() {
     });
   };
   
-  const loadConversations = async (isRefreshing = false) => {
+  const loadTaskConversations = async (isRefreshing = false) => {
     try {
       setError(null);
       
@@ -133,32 +157,99 @@ export default function ChatScreen() {
         setLoading(true);
       }
       
-      console.log('Attempting to load conversations...');
-      const data = await chatService.getConversations();
-      console.log(`Successfully loaded ${data.length} conversations`);
+      console.log('Attempting to load task conversations with improved method...');
       
-      // Log conversation data to help debug
-      if (data.length > 0) {
-        console.log('First conversation structure:', JSON.stringify({
-          id: data[0].id,
-          task_id: data[0].task_id,
-          has_participants: !!data[0].participants,
-          has_conversation_participants: !!data[0].conversation_participants,
-          participant_count: (data[0].participants || []).length + (data[0].conversation_participants || []).length,
-          has_task: !!data[0].task
-        }));
-      }
+      // Use our new improved service method to get task conversations
+      const conversations = await chatService.getTaskConversationsV2();
       
-      setConversations(data);
+      // Separate conversations into tasks to do and tasks to assign
+      // Only filter out 'completed' tasks, keep 'finished' tasks visible
+      // This ensures tasks stay in the chat until the Poster confirms completion
+      const tasksToDoArray = conversations
+        .filter(conv => !conv.is_task_owner)
+        .filter(conv => conv.task_status !== 'completed'); // Keep 'finished' tasks visible
+        
+      const tasksToAssignArray = conversations
+        .filter(conv => conv.is_task_owner)
+        .filter(conv => conv.task_status !== 'completed'); // Keep 'finished' tasks visible
+      
+      console.log(`Successfully loaded ${tasksToDoArray.length} tasks to do and ${tasksToAssignArray.length} tasks to assign (excluding only completed tasks)`);
+      
+      // Convert Conversation[] to TaskConversation[] format
+      const tasksIDo = tasksToDoArray.map(conv => ({
+        conversation_id: conv.id,
+        task_id: conv.task_id || '',
+        task_title: conv.task_title || 'Task',
+        task_status: conv.task_status || 'pending',
+        task_budget: 0,
+        other_user_id: conv.profiles?.[0]?.id || '',
+        other_user_name: conv.profiles?.[0] ? `${conv.profiles[0].first_name} ${conv.profiles[0].last_name || ''}`.trim() : 'Unknown',
+        other_user_avatar: conv.profiles?.[0]?.avatar_url || null,
+        last_message: conv.last_message?.content || null,
+        last_message_at: conv.last_message?.created_at || null,
+        unread_count: conv.unread_count,
+        is_task_owner: false
+      }));
+      
+      const tasksIAssign = tasksToAssignArray.map(conv => ({
+        conversation_id: conv.id,
+        task_id: conv.task_id || '',
+        task_title: conv.task_title || 'Task',
+        task_status: conv.task_status || 'pending',
+        task_budget: 0,
+        other_user_id: conv.profiles?.[0]?.id || '',
+        other_user_name: conv.profiles?.[0] ? `${conv.profiles[0].first_name} ${conv.profiles[0].last_name || ''}`.trim() : 'Unknown',
+        other_user_avatar: conv.profiles?.[0]?.avatar_url || null,
+        last_message: conv.last_message?.content || null,
+        last_message_at: conv.last_message?.created_at || null,
+        unread_count: conv.unread_count,
+        is_task_owner: true
+      }));
+      
+      // Final filter to ensure only completed tasks are excluded
+      // Tasks marked as 'finished' by Tasker remain visible until Poster confirms completion
+      const filteredTasksIDo = tasksIDo.filter(
+        task => task.task_status !== 'completed' // Keep 'finished' tasks visible
+      );
+      
+      const filteredTasksIAssign = tasksIAssign.filter(
+        task => task.task_status !== 'completed' // Keep 'finished' tasks visible
+      );
+      
+      // Store task conversation data
+      setTasksIDo(filteredTasksIDo);
+      setTasksIAssign(filteredTasksIAssign);
+      
+      // Create sections without Applications
+      const newSections: ConversationSection[] = [
+        {
+          title: 'Tasks I Assign',
+          data: filteredTasksIAssign,
+          type: 'toAssign',
+          icon: <Users size={18} color={Colors.primary} />
+        },
+        {
+          title: 'Tasks To Do',
+          data: filteredTasksIDo,
+          type: 'toDo',
+          icon: <Briefcase size={18} color={Colors.success} />
+        }
+      ];
+      
+      // Only include sections with data
+      const filteredSections = newSections.filter(section => section.data.length > 0);
+      
+      setSections(filteredSections);
+      
     } catch (error: any) {
-      console.error('Error loading conversations:', error);
+      console.error('Error loading task conversations:', error);
       console.error('Error details:', error.message);
       
       if (error.message?.includes('log in to continue') || 
           error.message?.includes('Authentication failed')) {
         // Handle auth errors gracefully
         console.log('Authentication error detected, showing login button');
-        setAuthError(true);
+        setAuthError('Failed to verify authentication. Please try again.');
       } else {
         // Show alert for other errors
         console.log('Non-authentication error, showing generic error message');
@@ -172,99 +263,89 @@ export default function ChatScreen() {
   };
   
   const handleRefresh = () => {
-    loadConversations(true);
+    loadTaskConversations(true);
   };
 
-  const handleOpenConversation = (conversationId: string) => {
+  const handleOpenConversation = (conversation: TaskConversation) => {
+    // Navigate to conversation
     router.push({
       pathname: '/chat/[id]',
-      params: { id: conversationId }
+      params: { id: conversation.conversation_id }
     });
   };
   
-  const renderConversationItem = ({ item }: { item: Conversation }) => {
+  const renderTaskConversationItem = ({ item }: { item: TaskConversation }) => {
     // Format date for last message
-    const formatMessageDate = (dateString?: string) => {
+    const formatMessageDate = (dateString?: string | null) => {
       if (!dateString) return '';
       
       const date = new Date(dateString);
       if (isToday(date)) {
-        return format(date, 'h:mm a'); // e.g. "3:45 PM"
+        return format(date, 'h:mm a');
       } else if (isYesterday(date)) {
         return 'Yesterday';
       } else {
-        return format(date, 'MMM d'); // e.g. "Jan 5"
+        return format(date, 'MMM d');
       }
     };
     
-    // Get other participant
-    const getOtherParticipant = () => {
-      // Check for participants (backward compatibility) 
-      const allParticipants = item.participants || 
-                             item.conversation_participants || [];
-      
-      if (!allParticipants || allParticipants.length === 0) {
-        console.log('No participants found for conversation:', item.id);
-        return { name: 'Unknown', avatar: null };
-      }
-      
-      // Find the first participant that has a profile
-      const participantWithProfile = allParticipants.find((p: any) => p.profile);
-      if (participantWithProfile) {
-        // Simply use the avatar URL as is
-        return {
-          name: participantWithProfile.profile.first_name || 'User',
-          avatar: participantWithProfile.profile.avatar_url
-        };
-      }
-      
-      return { name: 'Unknown', avatar: null };
-    };
+    // Determine the color for task status
+    const statusColor = getStatusColor(item.task_status);
     
-    const { name, avatar } = getOtherParticipant();
-    const lastMessageTime = item.last_message_at ? formatMessageDate(item.last_message_at) : '';
-    const task = item.task || {};
+    // Handle click to open the conversation
+    const handleItemPress = () => {
+      handleOpenConversation(item);
+    };
     
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.conversationItem}
-        onPress={() => handleOpenConversation(item.id)}
+        onPress={handleItemPress}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`Open conversation for ${item.task_title}`}
       >
-        {/* Avatar */}
-        <View style={styles.avatar}>
-          {avatar ? (
-            <Image 
-              source={{ uri: avatar }}
-              style={styles.avatarImage}
-              onError={() => console.error(`Failed to load avatar for ${name}`)} 
+        <View style={styles.avatarContainer}>
+          {item.other_user_avatar ? (
+            <Image
+              source={{ uri: item.other_user_avatar }}
+              style={styles.avatar}
             />
           ) : (
             <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarInitial}>{name.charAt(0).toUpperCase()}</Text>
+              <Text style={styles.avatarText}>
+                {item.other_user_name.charAt(0).toUpperCase()}
+              </Text>
             </View>
           )}
         </View>
         
-        {/* Conversation Info */}
-        <View style={styles.conversationInfo}>
+        <View style={styles.conversationDetails}>
           <View style={styles.conversationHeader}>
-            <Text style={styles.personName}>{name}</Text>
-            <Text style={styles.messageTime}>{lastMessageTime}</Text>
+            <Text style={styles.participantName}>{item.other_user_name}</Text>
+            <Text style={styles.timeText}>{formatMessageDate(item.last_message_at)}</Text>
           </View>
           
           <View style={styles.taskInfo}>
-            <Text style={styles.taskTitle} numberOfLines={1}>
-              {task.title || 'Task'}
-            </Text>
+            <Text style={styles.taskTitle} numberOfLines={1}>{item.task_title}</Text>
             
-            {task.status && (
-              <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(task.status)}20` }]}>
-                <View style={[styles.statusDot, { backgroundColor: getStatusColor(task.status) }]} />
-                <Text style={[styles.statusText, { color: getStatusColor(task.status) }]}>
-                  {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
+            <View style={styles.badgeContainer}>
+              <View style={[styles.badge, { backgroundColor: statusColor }]}>
+                <Text style={styles.badgeText}>
+                  {item.task_status.charAt(0).toUpperCase() + item.task_status.slice(1).replace('_', ' ')}
                 </Text>
               </View>
-            )}
+              
+              {item.is_task_owner ? (
+                <View style={[styles.badge, styles.ownerBadge]}>
+                  <Text style={styles.badgeText}>Posted</Text>
+                </View>
+              ) : (
+                <View style={[styles.badge, styles.assigneeBadge]}>
+                  <Text style={styles.badgeText}>Assigned</Text>
+                </View>
+              )}
+            </View>
           </View>
           
           <View style={styles.messagePreview}>
@@ -272,8 +353,8 @@ export default function ChatScreen() {
               {item.last_message || 'No messages yet'}
             </Text>
             
-            {task.budget && (
-              <Text style={styles.budgetText}>₹{formatPrice(task.budget)}</Text>
+            {item.task_budget > 0 && (
+              <Text style={styles.budgetText}>₹{formatPrice(item.task_budget)}</Text>
             )}
           </View>
         </View>
@@ -281,80 +362,182 @@ export default function ChatScreen() {
     );
   };
 
+  const renderSectionHeader = ({ section }: { section: ConversationSection }) => {
+    return (
+      <View style={styles.sectionHeader}>
+        <SafeText>{section.icon}</SafeText>
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+        <View style={styles.countBadge}>
+          <Text style={styles.countText}>{section.data.length}</Text>
+        </View>
+        {section.data.length === 0 && (
+          <Text style={styles.emptyNotice}>No tasks available</Text>
+        )}
+      </View>
+    );
+  };
+
+  // In the ChatScreen component, add fetching of task acceptance notifications
+  useEffect(() => {
+    const fetchTaskConversations = async () => {
+      if (!userId) return;
+      
+      setLoading(true);
+      try {
+        // Fetch conversations where the user has tasks to do or tasks they assigned
+        const result = await chatService.getTaskConversationsV2();
+        
+        if (result) {
+          // Convert Conversation[] to TaskConversation[]
+          const taskConvs = result.map(conv => ({
+            conversation_id: conv.id,
+            task_id: conv.task_id || '',
+            task_title: conv.task_title || 'Task',
+            task_status: conv.task_status || 'pending',
+            task_budget: 0,
+            other_user_id: conv.profiles?.[0]?.id || '',
+            other_user_name: conv.profiles?.[0] ? `${conv.profiles[0].first_name} ${conv.profiles[0].last_name || ''}`.trim() : 'Unknown',
+            other_user_avatar: conv.profiles?.[0]?.avatar_url || null,
+            last_message: conv.last_message?.content || null,
+            last_message_at: conv.last_message?.created_at || null,
+            unread_count: conv.unread_count,
+            is_task_owner: conv.is_task_owner || false
+          }));
+          setTaskConversations(taskConvs);
+        }
+      } catch (err: any) {
+        console.error('[ERROR] Error fetching task conversations:', err);
+        setError(err.message || 'An unexpected error occurred');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    if (userId) {
+      fetchTaskConversations();
+    }
+  }, [userId]);
+
   if (authChecking) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={styles.loadingText}>Checking authentication...</Text>
-      </View>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={styles.loadingText}>Checking authentication...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
   
   if (authError) {
     return (
-      <View style={styles.authErrorContainer}>
-        <UserCircle size={80} color={Colors.primary} style={styles.authIcon} />
-        <Text style={styles.authErrorTitle}>Authentication Required</Text>
-        <Text style={styles.authErrorMessage}>
-          Please log in to access your messages and chat with task owners.
-        </Text>
-        <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
-          <Text style={styles.loginButtonText}>Go to Login</Text>
-        </TouchableOpacity>
-      </View>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.authErrorContainer}>
+          <UserCircle size={80} color={Colors.primary} style={styles.authIcon} />
+          <Text style={styles.authErrorTitle}>Authentication Required</Text>
+          <Text style={styles.authErrorMessage}>
+            Please log in to access your messages and task applications.
+          </Text>
+          <TouchableOpacity 
+            style={styles.loginButton} 
+            onPress={handleLogin}
+            accessibilityRole="button"
+            accessibilityLabel="Go to login screen"
+          >
+            <Text style={styles.loginButtonText}>Go to Login</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
     );
   }
 
   if (loading && !refreshing) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-        <Text style={styles.loadingText}>Loading conversations...</Text>
-      </View>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={styles.loadingText}>Loading conversations...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
+  const showEmptyState = tasksIDo.length === 0 && tasksIAssign.length === 0;
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Messages</Text>
-      
-      {error ? (
-        <EmptyState
-          title="Couldn't load conversations"
-          message={error}
-          icon="alert-circle"
-          buttonText="Try Again"
-          onButtonPress={() => loadConversations()}
-        />
-      ) : conversations.length === 0 ? (
-        <EmptyState
-          title="No conversations yet"
-          message="When you accept a task, you'll be able to chat with the task creator here."
-          icon="message-circle"
-          buttonText="Find Tasks"
-          onButtonPress={() => router.push('/(tabs)/tasks')}
-        />
-      ) : (
-        <FlatList
-          data={conversations}
-          keyExtractor={(item) => item.id}
-          renderItem={renderConversationItem}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              colors={[Colors.primary]}
-              tintColor={Colors.primary}
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <Text style={styles.title}>Tasks & Chats</Text>
+        
+        {/* Task acceptance notification section */}
+        <GestureHandlerRootView style={{ flex: 0 }}>
+          <PendingAcceptancesSection />
+        </GestureHandlerRootView>
+        
+        {error ? (
+          <EmptyState
+            title="Couldn't load task chats"
+            message={error}
+            icon="alert-circle"
+            buttonText="Try Again"
+            onButtonPress={() => loadTaskConversations()}
+          />
+        ) : showEmptyState ? (
+          <View style={styles.emptyContainer}>
+            <EmptyState
+              title="No Task Assignments"
+              message="When you create or accept a task that gets assigned, it will appear here for easy communication."
+              icon="briefcase"
+              buttonText="Browse Tasks"
+              onButtonPress={() => router.push('/(tabs)/tasks')}
             />
-          }
-        />
-      )}
-    </View>
+          </View>
+        ) : (
+          <View style={styles.contentContainer}>
+            <SectionList
+              sections={sections}
+              keyExtractor={(item) => item.conversation_id}
+              renderItem={renderTaskConversationItem}
+              renderSectionHeader={renderSectionHeader}
+              stickySectionHeadersEnabled={true}
+              contentContainerStyle={styles.listContent}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handleRefresh}
+                  colors={[Colors.primary]}
+                  tintColor={Colors.primary}
+                />
+              }
+              ListEmptyComponent={
+                <EmptyState
+                  title="No Task Assignments"
+                  message="When you create or accept a task that gets assigned, it will appear here for easy communication."
+                  icon="briefcase"
+                  buttonText="Browse Tasks"
+                  onButtonPress={() => router.push('/(tabs)/tasks')}
+                />
+              }
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={10}
+              maxToRenderPerBatch={10}
+              windowSize={10}
+              scrollEventThrottle={16}
+              onEndReachedThreshold={0.5}
+              removeClippedSubviews={true}
+            />
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -369,7 +552,35 @@ const styles = StyleSheet.create({
   },
   listContent: {
     flexGrow: 1,
-    paddingBottom: 20,
+    paddingBottom: 120, // Extra padding at bottom to account for tab bar
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border + '40',
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Bold',
+    color: Colors.text,
+    marginLeft: 8,
+  },
+  countBadge: {
+    backgroundColor: Colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginLeft: 8,
+  },
+  countText: {
+    fontSize: 12,
+    fontFamily: 'SpaceGrotesk-Medium',
+    color: Colors.textSecondary,
   },
   conversationItem: {
     flexDirection: 'row',
@@ -377,13 +588,26 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: Colors.cardBackground,
     marginBottom: 12,
+    marginHorizontal: 16,
     borderWidth: 1,
     borderColor: Colors.border,
+    // Enhanced shadow
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
   },
-  avatar: {
+  avatarContainer: {
     marginRight: 16,
   },
-  avatarImage: {
+  avatar: {
     width: 50,
     height: 50,
     borderRadius: 25,
@@ -399,12 +623,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarInitial: {
+  avatarText: {
     color: '#fff',
     fontSize: 22,
     fontFamily: 'SpaceGrotesk-Bold',
   },
-  conversationInfo: {
+  conversationDetails: {
     flex: 1,
     justifyContent: 'center',
   },
@@ -414,12 +638,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
-  personName: {
+  participantName: {
     fontSize: 16,
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
   },
-  messageTime: {
+  timeText: {
     fontSize: 12,
     fontFamily: 'SpaceGrotesk-Regular',
     color: Colors.textSecondary,
@@ -436,20 +660,17 @@ const styles = StyleSheet.create({
     marginRight: 8,
     flex: 1,
   },
-  statusBadge: {
+  badgeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+  },
+  badge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    gap: 4,
   },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusText: {
+  badgeText: {
     fontSize: 10,
     fontFamily: 'SpaceGrotesk-Medium',
   },
@@ -482,51 +703,15 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk-Medium',
     color: Colors.textSecondary,
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  emptyIcon: {
-    marginBottom: 16,
-    opacity: 0.7,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontFamily: 'SpaceGrotesk-Bold',
-    color: Colors.text,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  emptyMessage: {
-    fontSize: 16,
-    fontFamily: 'SpaceGrotesk-Regular',
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  emptyButton: {
-    backgroundColor: Colors.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  emptyButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontFamily: 'SpaceGrotesk-Bold',
-  },
   authErrorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.background,
-    padding: 20,
+    paddingHorizontal: 32,
   },
   authIcon: {
-    marginBottom: 20,
-    opacity: 0.8,
+    marginBottom: 16,
   },
   authErrorTitle: {
     fontSize: 24,
@@ -541,18 +726,44 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginBottom: 24,
     textAlign: 'center',
-    lineHeight: 24,
+    lineHeight: 22,
   },
   loginButton: {
     backgroundColor: Colors.primary,
-    paddingVertical: 14,
-    paddingHorizontal: 30,
-    borderRadius: 12,
-    marginTop: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
   },
   loginButtonText: {
     color: '#fff',
     fontSize: 16,
     fontFamily: 'SpaceGrotesk-Bold',
+    textAlign: 'center',
   },
-}); 
+  contentContainer: {
+    flex: 1,
+    width: '100%',
+  },
+  emptyContainer: {
+    flex: 1,
+    width: '100%',
+    paddingHorizontal: 16,
+  },
+  emptyNotice: {
+    fontSize: 12,
+    fontFamily: 'SpaceGrotesk-Regular',
+    color: Colors.textSecondary,
+    marginLeft: 8,
+  },
+  applicationItem: {
+    backgroundColor: Colors.cardBackground,
+  },
+  ownerBadge: {
+    backgroundColor: Colors.warning,
+  },
+  assigneeBadge: {
+    backgroundColor: Colors.success,
+  },
+});
+
+export default ChatScreen; 

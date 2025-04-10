@@ -14,6 +14,7 @@ import {
   SafeAreaView,
   TextInput,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,16 +29,20 @@ import { Task } from '../types/task';
 import { EmptyState } from '../components/shared/EmptyState';
 import Colors from '../constants/Colors';
 import { logger } from '../utils/logger';
-import { MapPin, Calendar, IndianRupee, Tag, AlertCircle, Star, Clock, Building2, User, CreditCard, Wrench, Info, Navigation } from 'lucide-react-native';
+import { MapPin, Calendar, IndianRupee, Tag, AlertCircle, Star, Clock, Building2, User, CreditCard, Wrench, Info, Navigation, Grid, List, ArrowDownUp as SortDescending, Filter } from 'lucide-react-native';
 import { calculateDistance } from '../utils/taskUtils';
 import TaskCard from '../components/tasks/TaskCard';
-import TaskDetailModal from '../components/tasks/TaskDetailModal';
+import { TaskDetailModal } from '../components/tasks/TaskDetailModal';
 import SortModal from '../components/tasks/SortModal';
 import FilterModal from '../components/tasks/FilterModal';
+import { supabase } from '../lib/supabase';
+import { formatDistance, getTimeAgo, getUrgencyColor, truncateDescription, getStatusColor, formatStatus } from '../utils/taskUtils';
+import { formatPrice } from '../utils/formatters';
 
 const { width } = Dimensions.get('window');
 const COLUMN_COUNT = 2;
 const CARD_WIDTH = (width - 48) / COLUMN_COUNT; // 48 = padding (16) * 2 + gap (16)
+const CARD_ASPECT_RATIO = 1; // Square cards
 
 export default function TasksScreen() {
   const router = useRouter();
@@ -50,6 +55,8 @@ export default function TasksScreen() {
   const [sortModalVisible, setSortModalVisible] = useState(false);
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [sortBy, setSortBy] = useState<string>('recent');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [viewType, setViewType] = useState<'grid' | 'list'>('grid');
   const [tempFilters, setTempFilters] = useState<{
     status: string[];
     category: string[];
@@ -84,6 +91,25 @@ export default function TasksScreen() {
     address: string;
   } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [tasksView, setTasksView] = useState<'all' | 'posted' | 'accepted'>('all');
+  const [acceptingTask, setAcceptingTask] = useState(false);
+  const [taskDetailModalVisible, setTaskDetailModalVisible] = useState(false);
+
+  // Fetch current user ID
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.user?.id) {
+          setCurrentUserId(data.session.user.id);
+        }
+      } catch (error) {
+        logger.error('Error fetching current user:', error);
+      }
+    };
+    
+    fetchCurrentUser();
+  }, []);
 
   const fetchTasks = async () => {
     try {
@@ -289,87 +315,74 @@ export default function TasksScreen() {
     }
     
     if (filters.minBudget !== null) {
-      result = result.filter(task => task.budget >= (filters.minBudget || 0));
+      result = result.filter(task => {
+        const budget = task.price || task.budget || 0;
+        return budget >= (filters.minBudget || 0);
+      });
     }
     
     if (filters.maxBudget !== null) {
-      result = result.filter(task => task.budget <= (filters.maxBudget || Infinity));
+      result = result.filter(task => {
+        const budget = task.price || task.budget || 0;
+        return budget <= (filters.maxBudget || Infinity);
+      });
     }
     
-    // Distance filtering based on range
-    if (filters.distanceRange === 'nearby') {
-      // Tasks within 1km
-      result = result.filter(task => (task.distance || 9999) <= 1000);
-    } else if (filters.distanceRange === 'close') {
-      // Tasks between 1km and 5km
+    if (filters.minDistance !== null || filters.maxDistance !== null) {
       result = result.filter(task => {
-        const distance = task.distance || 0;
-        return distance >= 1000 && distance <= 5000;
+        // Check min distance if set
+        if (filters.minDistance !== null && (!task.distance || task.distance < filters.minDistance)) {
+          return false;
+        }
+        
+        // Check max distance if set
+        if (filters.maxDistance !== null && (task.distance && task.distance > filters.maxDistance)) {
+          return false;
+        }
+        
+        return true;
       });
-    } else if (filters.distanceRange === 'medium') {
-      // Tasks between 5km and 50km
-      result = result.filter(task => {
-        const distance = task.distance || 0;
-        return distance >= 5000 && distance <= 50000;
-      });
-    } else if (filters.distanceRange === 'far') {
-      // Tasks beyond 50km
-      result = result.filter(task => (task.distance || 0) > 50000);
-    } else {
-      // Apply individual distance filters if no range is selected
-      if (filters.minDistance !== null) {
-        result = result.filter(task => (task.distance || 0) >= filters.minDistance!);
-      }
-      
-      if (filters.maxDistance !== null && filters.maxDistance !== undefined) {
-        result = result.filter(task => 
-          (task.distance || 9999) <= (filters.maxDistance as number)
-        );
-      }
     }
     
     // Apply sorting
-    switch (sortBy) {
-      case 'recent':
-        result.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-        break;
-      case 'oldest':
-        result.sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
-        break;
-      case 'deadline_soon':
-        result.sort((a, b) => {
-          if (!a.deadline) return 1;
-          if (!b.deadline) return -1;
-          return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
-        });
-        break;
-      case 'priority_high':
-        result.sort((a, b) => {
-          const priorityOrder = { high: 3, medium: 2, low: 1 };
-          const aPriority = a.priority ? priorityOrder[a.priority as keyof typeof priorityOrder] || 0 : 0;
-          const bPriority = b.priority ? priorityOrder[b.priority as keyof typeof priorityOrder] || 0 : 0;
-          return bPriority - aPriority;
-        });
-        break;
-      case 'distance_near':
-        result.sort((a, b) => (a.distance || 9999) - (b.distance || 9999));
-        break;
-      case 'distance_far':
-        result.sort((a, b) => (b.distance || 0) - (a.distance || 0));
-        break;
-    }
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case 'nearest':
+          return (a.distance || Infinity) - (b.distance || Infinity);
+        case 'farthest':
+          return (b.distance || 0) - (a.distance || 0);
+        case 'newest':
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        case 'oldest':
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        case 'highest_budget':
+          return (b.price || b.budget || 0) - (a.price || a.budget || 0);
+        case 'lowest_budget':
+          return (a.price || a.budget || 0) - (b.price || b.budget || 0);
+        case 'urgency_high':
+          if (a.urgent && !b.urgent) return -1;
+          if (!a.urgent && b.urgent) return 1;
+          return 0;
+        default:
+          return 0;
+      }
+    });
     
     setFilteredTasks(result);
   }, [tasks, sortBy, filters]);
 
+  useEffect(() => {
+    // Apply filters and view type when tasks or filters change
+    filterTasks();
+  }, [tasks, filters, tasksView]);
+
   const handleRefresh = () => {
     setRefreshing(true);
-    getCurrentLocation();
-    fetchTasks();
+    fetchTasks().finally(() => setRefreshing(false));
   };
 
   const handleCreateTask = () => {
-    router.push('/create-task');
+    router.push('/create-task' as any);
   };
 
   const handleTaskPress = (task: Task) => {
@@ -408,84 +421,14 @@ export default function TasksScreen() {
     setFilterModalVisible(false);
   };
 
-  const truncateDescription = (description: string | undefined, maxLength: number = 80) => {
-    if (!description) return '';
-    return description.length > maxLength 
-      ? description.substring(0, maxLength) + '...' 
-      : description;
-  };
-
-  const getUrgencyColor = (task: Task) => {
-    if (task.urgent) return '#F44336'; // Red for urgent
-    if (task.priority === 'high') return '#F44336'; // Red for high priority
-    if (task.priority === 'medium') return '#FFA726'; // Yellow/Orange for medium
-    return '#4CAF50'; // Green for low/normal priority
-  };
-
-  const getTimeAgo = (date: string | undefined) => {
-    if (!date) return 'Just now';
-    
-    const now = new Date();
-    const taskDate = new Date(date);
-    const diffMs = now.getTime() - taskDate.getTime();
-    
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    
-    if (diffMins < 60) return `${diffMins}min ago`;
-    if (diffHrs < 24) return `${diffHrs}hr ago`;
-    return `${diffDays}d ago`;
-  };
-
-  const formatDistance = (meters: number | undefined) => {
-    if (!meters) return 'Unknown';
-    if (meters < 1000) return `${meters}m`;
-    return `${(meters / 1000).toFixed(1)}km`;
-  };
-
   const renderTaskCard = ({ item: task }: { item: Task }) => {
-    const locationText = task.location?.address || 'Remote';
-    const distance = task.distance || 0;
-    const urgencyColor = getUrgencyColor(task);
-
     return (
-      <TouchableOpacity 
-        style={styles.taskCard} 
-        onPress={() => handleTaskPress(task)}
-      >
-        <View style={styles.taskContent}>
-          {/* Title with urgency indicator */}
-          <View style={styles.titleContainer}>
-            <View style={[styles.urgencyDot, { backgroundColor: urgencyColor }]} />
-            <Text style={styles.taskTitle} numberOfLines={2}>
-              {task.title}
-            </Text>
-      </View>
-          
-          {/* Description */}
-          <Text style={styles.taskDescription} numberOfLines={3}>
-            {truncateDescription(task.description)}
-          </Text>
-          
-          {/* Bottom info: location and time posted */}
-          <View style={styles.taskFooter}>
-            <View style={styles.metaItem}>
-              <MapPin size={14} color={Colors.textSecondary} />
-              <Text style={styles.metaText}>
-                {formatDistance(distance)}
-              </Text>
-            </View>
-            
-            <View style={styles.metaItem}>
-              <Clock size={14} color={Colors.textSecondary} />
-              <Text style={styles.metaText}>
-                {getTimeAgo(task.created_at)}
-              </Text>
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
+      <TaskCard 
+        task={task} 
+        onPress={handleTaskPress} 
+        viewType={viewType}
+        currentUserId={currentUserId}
+      />
     );
   };
 
@@ -504,249 +447,246 @@ export default function TasksScreen() {
         onRequestClose={() => setSelectedTask(null)}
       >
         <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            {/* Close Button */}
-            <TouchableOpacity 
-              style={styles.closeButton}
-              onPress={() => setSelectedTask(null)}
-            >
-              <Ionicons name="close" size={24} color={Colors.text} />
-            </TouchableOpacity>
-
-            {/* Task Details */}
-            <ScrollView style={styles.modalScrollContent}>
-              {/* Header */}
-              <View style={styles.modalHeader}>
-                <View style={styles.modalTitleContainer}>
-                  <Text style={styles.modalTitle}>{selectedTask.title}</Text>
-                  {selectedTask.urgent && (
-                    <View style={styles.urgentBadge}>
-                      <AlertCircle size={14} color="#fff" />
-                      <Text style={styles.urgentText}>Urgent</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-
-              {/* Status and Category */}
-              <View style={styles.metadataContainer}>
-                <View style={[
-                  styles.statusBadge, 
-                  { backgroundColor: selectedTask.status === 'pending' ? '#FFA72620' : 
-                                  selectedTask.status === 'assigned' ? '#29B6F620' : 
-                                  selectedTask.status === 'completed' ? '#66BB6A20' : 
-                                  '#EF535020' }
-                ]}>
-                  <Text style={[
-                    styles.statusText, 
-                    { color: selectedTask.status === 'pending' ? '#FFA726' : 
-                             selectedTask.status === 'assigned' ? '#29B6F6' : 
-                             selectedTask.status === 'completed' ? '#66BB6A' : 
-                             '#EF5350' }
-                  ]}>
-                    {selectedTask.status.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
-                  </Text>
-                </View>
-
-                {selectedTask.categories && selectedTask.categories.length > 0 && (
-                  <View style={styles.categoryBadge}>
-                    <Tag size={14} color={Colors.textSecondary} />
-                    <Text style={styles.categoryText}>{selectedTask.categories[0]}</Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Budget - Moved here with green border */}
-              <View style={styles.budgetContainer}>
-                <View style={styles.budgetContent}>
-                  <IndianRupee size={18} color="#4CAF50" />
-                  <Text style={styles.budgetText}>
-                    {selectedTask.budget.toLocaleString('en-IN')}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Description */}
-              <View style={styles.modalSection}>
-                <Text style={styles.sectionTitle}>Description</Text>
-                <View style={styles.descriptionContainer}>
-                  <Text style={styles.description}>{selectedTask.description || 'No description provided.'}</Text>
-                </View>
-              </View>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              {/* Close Button */}
+              <TouchableOpacity 
+                style={styles.closeButton}
+                onPress={() => setSelectedTask(null)}
+              >
+                <Ionicons name="close" size={24} color={Colors.text} />
+              </TouchableOpacity>
 
               {/* Task Details */}
-              <View style={styles.modalSection}>
-                <Text style={styles.sectionTitle}>Task Details</Text>
-                
-                <View style={styles.detailsGrid}>
-                  {/* Location */}
-                  <View style={styles.detailItem}>
-                    <View style={styles.detailIcon}>
-                      <MapPin size={18} color={Colors.textSecondary} />
-                    </View>
-                    <Text style={styles.detailLabel}>Location</Text>
-                    <Text style={styles.detailValue}>{selectedTask.location?.address || 'Remote'}</Text>
-                  </View>
-                  
-                  {/* Deadline */}
-                  <View style={styles.detailItem}>
-                    <View style={styles.detailIcon}>
-                      <Calendar size={18} color={Colors.textSecondary} />
-                    </View>
-                    <Text style={styles.detailLabel}>Deadline</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedTask.deadline ? format(new Date(selectedTask.deadline), 'MMM d, yyyy') : 'No deadline'}
-                    </Text>
-                  </View>
-                  
-                  {/* Estimated Time */}
-                  <View style={styles.detailItem}>
-                    <View style={styles.detailIcon}>
-                      <Clock size={18} color={Colors.textSecondary} />
-                    </View>
-                    <Text style={styles.detailLabel}>Est. Time</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedTask.estimated_time 
-                        ? `${Math.floor(selectedTask.estimated_time / 60)}h ${selectedTask.estimated_time % 60}m` 
-                        : 'Not specified'}
-                    </Text>
-                  </View>
-                  
-                  {/* Priority */}
-                  <View style={styles.detailItem}>
-                    <View style={styles.detailIcon}>
-                      <Star size={18} color={selectedTask.priority === 'high' ? '#F44336' : 
-                                       selectedTask.priority === 'medium' ? '#FFC107' : 
-                                       '#4CAF50'} />
-                    </View>
-                    <Text style={styles.detailLabel}>Priority</Text>
-                    <Text style={[
-                      styles.detailValue,
-                      { color: selectedTask.priority === 'high' ? '#F44336' : 
-                               selectedTask.priority === 'medium' ? '#FFC107' : 
-                               '#4CAF50' }
-                    ]}>
-                      {selectedTask.priority ? selectedTask.priority.charAt(0).toUpperCase() + selectedTask.priority.slice(1) : 'Normal'}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* Additional Information */}
-              <View style={styles.modalSection}>
-                <Text style={styles.sectionTitle}>Additional Information</Text>
-                
-                <View style={styles.additionalInfo}>
-                  {/* Skills Required */}
-                  <View style={styles.infoItem}>
-                    <View style={styles.infoIcon}>
-                      <Wrench size={18} color={Colors.textSecondary} />
-                    </View>
-                    <View style={styles.infoContent}>
-                      <Text style={styles.infoLabel}>Required Skills</Text>
-                      <Text style={styles.infoValue}>
-                        {selectedTask.skill_requirements && selectedTask.skill_requirements.length > 0 
-                          ? selectedTask.skill_requirements.join(', ') 
-                          : 'None required'}
-                      </Text>
-                    </View>
-                  </View>
-                  
-                  {/* Payment Method */}
-                  <View style={styles.infoItem}>
-                    <View style={styles.infoIcon}>
-                      <CreditCard size={18} color={Colors.textSecondary} />
-                    </View>
-                    <View style={styles.infoContent}>
-                      <Text style={styles.infoLabel}>Payment Method</Text>
-                      <Text style={styles.infoValue}>
-                        {selectedTask.payment_method
-                          ? selectedTask.payment_method.charAt(0).toUpperCase() + selectedTask.payment_method.slice(1)
-                          : 'Not specified'}
-                      </Text>
-                    </View>
-                  </View>
-                  
-                  {/* Posted Date */}
-                  <View style={styles.infoItem}>
-                    <View style={styles.infoIcon}>
-                      <Calendar size={18} color={Colors.textSecondary} />
-                    </View>
-                    <View style={styles.infoContent}>
-                      <Text style={styles.infoLabel}>Posted</Text>
-                      <Text style={styles.infoValue}>
-                        {selectedTask.created_at ? format(new Date(selectedTask.created_at), 'MMM d, yyyy') : 'Unknown'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Task Visibility */}
-                  <View style={styles.infoItem}>
-                    <View style={styles.infoIcon}>
-                      <Info size={18} color={Colors.textSecondary} />
-                    </View>
-                    <View style={styles.infoContent}>
-                      <Text style={styles.infoLabel}>Task Visibility</Text>
-                      <Text style={styles.infoValue}>
-                        {selectedTask.task_visibility_hours ? `${selectedTask.task_visibility_hours} hours` : 'Not specified'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Completion Time */}
-                  <View style={styles.infoItem}>
-                    <View style={styles.infoIcon}>
-                      <Clock size={18} color={Colors.textSecondary} />
-                    </View>
-                    <View style={styles.infoContent}>
-                      <Text style={styles.infoLabel}>Complete Within</Text>
-                      <Text style={styles.infoValue}>
-                        {selectedTask.task_completion_hours ? `${selectedTask.task_completion_hours} hours` : 'Not specified'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </View>
-
-              {/* Photo Gallery - Moved to bottom */}
-              {hasPhotos && (
-                <View style={styles.modalSection}>
-                  <Text style={styles.sectionTitle}>Photos</Text>
-                  <View style={styles.photoGallery}>
-                    {hasPhotos && firstPhoto ? (
-                      <Image 
-                        source={{ uri: firstPhoto }}
-                        style={styles.modalImage}
-                      />
-                    ) : (
-                      <View style={styles.placeholderImage}>
-                        <Ionicons name="image-outline" size={32} color={Colors.textSecondary} />
+              <ScrollView style={styles.modalScrollContent}>
+                {/* Header */}
+                <View style={styles.modalHeader}>
+                  <View style={styles.modalTitleContainer}>
+                    <Text style={styles.modalTitle}>{selectedTask.title}</Text>
+                    {selectedTask.urgent && (
+                      <View style={styles.urgentBadge}>
+                        <AlertCircle size={14} color="#fff" />
+                        <Text style={styles.urgentText}>Urgent</Text>
                       </View>
                     )}
                   </View>
                 </View>
-              )}
 
-              {/* Apply Button */}
-              <TouchableOpacity style={styles.applyButton} onPress={() => {
-                Alert.alert(
-                  'Apply for Task',
-                  'Are you sure you want to apply for this task?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { 
-                      text: 'Apply', 
-                      onPress: () => {
-                        Alert.alert('Success', 'Your application has been submitted!');
+                {/* Status and Category */}
+                <View style={styles.metadataContainer}>
+                  <View style={[
+                    styles.statusBadge, 
+                    { backgroundColor: selectedTask.status === 'pending' ? '#FFA72620' : 
+                                    selectedTask.status === 'assigned' ? '#29B6F620' : 
+                                    selectedTask.status === 'completed' ? '#66BB6A20' : 
+                                    '#EF535020' }
+                  ]}>
+                    <Text style={[
+                      styles.statusText, 
+                      { color: selectedTask.status === 'pending' ? '#FFA726' : 
+                               selectedTask.status === 'assigned' ? '#29B6F6' : 
+                               selectedTask.status === 'completed' ? '#66BB6A' : 
+                               '#EF5350' }
+                    ]}>
+                      {selectedTask.status.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                    </Text>
+                  </View>
+
+                  {selectedTask.categories && selectedTask.categories.length > 0 && (
+                    <View style={styles.categoryBadge}>
+                      <Tag size={14} color={Colors.textSecondary} />
+                      <Text style={styles.categoryText}>{selectedTask.categories[0]}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Budget - Moved here with green border */}
+                <View style={styles.budgetContainer}>
+                  <View style={styles.budgetContent}>
+                    <IndianRupee size={18} color="#4CAF50" />
+                    <Text style={styles.budgetText}>
+                      {formatPrice(selectedTask.budget)}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Description */}
+                <View style={styles.modalSection}>
+                  <Text style={styles.sectionTitle}>Description</Text>
+                  <View style={styles.descriptionContainer}>
+                    <Text style={styles.description}>{selectedTask.description || 'No description provided.'}</Text>
+                  </View>
+                </View>
+
+                {/* Task Details */}
+                <View style={styles.modalSection}>
+                  <Text style={styles.sectionTitle}>Task Details</Text>
+                  
+                  <View style={styles.detailsGrid}>
+                    {/* Location */}
+                    <View style={styles.detailItem}>
+                      <View style={styles.detailIcon}>
+                        <MapPin size={18} color={Colors.textSecondary} />
+                      </View>
+                      <Text style={styles.detailLabel}>Location</Text>
+                      <Text style={styles.detailValue}>{selectedTask.location?.address || 'Remote'}</Text>
+                    </View>
+                    
+                    {/* Deadline */}
+                    <View style={styles.detailItem}>
+                      <View style={styles.detailIcon}>
+                        <Calendar size={18} color={Colors.textSecondary} />
+                      </View>
+                      <Text style={styles.detailLabel}>Deadline</Text>
+                      <Text style={styles.detailValue}>
+                        {selectedTask.deadline ? format(new Date(selectedTask.deadline), 'MMM d, yyyy') : 'No deadline'}
+                      </Text>
+                    </View>
+                    
+                    {/* Estimated Time */}
+                    <View style={styles.detailItem}>
+                      <View style={styles.detailIcon}>
+                        <Clock size={18} color={Colors.textSecondary} />
+                      </View>
+                      <Text style={styles.detailLabel}>Est. Time</Text>
+                      <Text style={styles.detailValue}>
+                        {selectedTask.estimated_time 
+                          ? `${Math.floor(selectedTask.estimated_time / 60)}h ${selectedTask.estimated_time % 60}m` 
+                          : 'Not specified'}
+                      </Text>
+                    </View>
+                    
+                    {/* Priority */}
+                    <View style={styles.detailItem}>
+                      <View style={styles.detailIcon}>
+                        <Star size={18} color={selectedTask.priority === 'high' ? '#F44336' : 
+                                         selectedTask.priority === 'medium' ? '#FFC107' : 
+                                         '#4CAF50'} />
+                      </View>
+                      <Text style={styles.detailLabel}>Priority</Text>
+                      <Text style={[
+                        styles.detailValue,
+                        { color: selectedTask.priority === 'high' ? '#F44336' : 
+                                 selectedTask.priority === 'medium' ? '#FFC107' : 
+                                 '#4CAF50' }
+                      ]}>
+                        {selectedTask.priority ? selectedTask.priority.charAt(0).toUpperCase() + selectedTask.priority.slice(1) : 'Normal'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Additional Information */}
+                <View style={styles.modalSection}>
+                  <Text style={styles.sectionTitle}>Additional Information</Text>
+                  
+                  <View style={styles.additionalInfo}>
+                    {/* Skills Required */}
+                    <View style={styles.infoItem}>
+                      <View style={styles.infoIcon}>
+                        <Wrench size={18} color={Colors.textSecondary} />
+                      </View>
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Required Skills</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTask.skill_requirements && selectedTask.skill_requirements.length > 0 
+                            ? selectedTask.skill_requirements.join(', ') 
+                            : 'None required'}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    {/* Payment Method */}
+                    <View style={styles.infoItem}>
+                      <View style={styles.infoIcon}>
+                        <CreditCard size={18} color={Colors.textSecondary} />
+                      </View>
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Payment Method</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTask.payment_method
+                            ? selectedTask.payment_method.charAt(0).toUpperCase() + selectedTask.payment_method.slice(1)
+                            : 'Not specified'}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    {/* Posted Date */}
+                    <View style={styles.infoItem}>
+                      <View style={styles.infoIcon}>
+                        <Calendar size={18} color={Colors.textSecondary} />
+                      </View>
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Posted</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTask.created_at ? format(new Date(selectedTask.created_at), 'MMM d, yyyy') : 'Unknown'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Task Visibility */}
+                    <View style={styles.infoItem}>
+                      <View style={styles.infoIcon}>
+                        <Info size={18} color={Colors.textSecondary} />
+                      </View>
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Task Visibility</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTask.task_visibility_hours ? `${selectedTask.task_visibility_hours} hours` : 'Not specified'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Completion Time */}
+                    <View style={styles.infoItem}>
+                      <View style={styles.infoIcon}>
+                        <Clock size={18} color={Colors.textSecondary} />
+                      </View>
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Complete Within</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTask.task_completion_hours ? `${selectedTask.task_completion_hours} hours` : 'Not specified'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Photo Gallery - Moved to bottom */}
+                {hasPhotos && (
+                  <View style={styles.modalSection}>
+                    <Text style={styles.sectionTitle}>Photos</Text>
+                    <View style={styles.photoGallery}>
+                      {hasPhotos && firstPhoto ? (
+                        <Image 
+                          source={{ uri: firstPhoto }}
+                          style={styles.modalImage}
+                        />
+                      ) : (
+                        <View style={styles.placeholderImage}>
+                          <Ionicons name="image-outline" size={32} color={Colors.textSecondary} />
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
+
+                {/* Apply Button */}
+                <View style={styles.modalFooter}>
+                  {selectedTask && selectedTask.created_by !== currentUserId && (
+                    <TouchableOpacity 
+                      style={[styles.applyButton, { flex: 1, margin: 0 }]}
+                      onPress={() => {
+                        handleAcceptTask(selectedTask.id, selectedTask.description);
                         setSelectedTask(null);
-                      } 
-                    },
-                  ]
-                );
-              }}>
-                <Text style={styles.applyButtonText}>Apply for this Task</Text>
-              </TouchableOpacity>
-            </ScrollView>
+                      }}
+                    >
+                      <Text style={styles.applyButtonText}>Apply</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </ScrollView>
+            </View>
           </View>
         </View>
       </Modal>
@@ -764,7 +704,7 @@ export default function TasksScreen() {
       { id: 'priority_high', label: 'Highest Priority' },
     ];
 
-  return (
+    return (
       <Modal
         visible={sortModalVisible}
         transparent={true}
@@ -1119,6 +1059,273 @@ export default function TasksScreen() {
     );
   };
 
+  // Handle accepting a task
+  const handleAcceptTask = async (taskId: string, message?: string) => {
+    try {
+      setAcceptingTask(true);
+      
+      // Call the service to accept the task
+      const result = await taskService.acceptTask(taskId, message);
+      
+      if (result.success) {
+        // If we have a conversation ID, navigate to the chat
+        if (result.conversationId) {
+          Alert.alert(
+            'Task Accepted!',
+            'You can now chat with the task owner to discuss details.',
+            [
+              {
+                text: 'View Chat',
+                onPress: () => {
+                  // Close the modal first
+                  setTaskDetailModalVisible(false);
+                  setSelectedTask(null);
+                  
+                  // Navigate to the chat
+                  setTimeout(() => {
+                    router.push(`/chat/${result.conversationId}` as any);
+                  }, 300);
+                },
+              },
+              {
+                text: 'Later',
+                style: 'cancel',
+                onPress: () => {
+                  // Just close the modal and refresh the task list
+                  setTaskDetailModalVisible(false);
+                  setSelectedTask(null);
+                  fetchTasks();
+                },
+              },
+            ]
+          );
+        } else {
+          // Just show success and close the modal
+          Alert.alert(
+            'Success', 
+            'Task accepted successfully! You will find this task in your assigned tasks list.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  setTaskDetailModalVisible(false);
+                  setSelectedTask(null);
+                  fetchTasks();
+                }
+              }
+            ]
+          );
+        }
+      } else {
+        // Handle specific cases based on error message
+        if (result.error?.includes('already assigned to you')) {
+          // This task is already accepted by the current user
+          Alert.alert(
+            'Already Accepted',
+            'You have already accepted this task. Would you like to view the conversation?',
+            [
+              {
+                text: 'View Chat',
+                onPress: () => {
+                  // Close the modal first
+                  setTaskDetailModalVisible(false);
+                  setSelectedTask(null);
+                  
+                  // Navigate to the chat if available
+                  if (result.conversationId) {
+                    setTimeout(() => {
+                      router.push(`/chat/${result.conversationId}` as any);
+                    }, 300);
+                  }
+                },
+              },
+              {
+                text: 'Later',
+                style: 'cancel',
+                onPress: () => {
+                  setTaskDetailModalVisible(false);
+                  setSelectedTask(null);
+                },
+              },
+            ]
+          );
+        } else if (result.error?.includes('own task')) {
+          // User is trying to accept their own task
+          Alert.alert(
+            'Cannot Accept Own Task',
+            'You cannot accept a task that you posted.',
+            [{ text: 'OK', onPress: () => {} }]
+          );
+          // We can close the modal since this is a clear case
+          setTaskDetailModalVisible(false);
+          setSelectedTask(null);
+        } else if (result.error?.includes('already been assigned')) {
+          // Task was assigned to someone else
+          Alert.alert(
+            'Task Already Assigned',
+            'This task has already been assigned to someone else.',
+            [{ 
+              text: 'OK', 
+              onPress: () => {
+                setTaskDetailModalVisible(false);
+                setSelectedTask(null);
+                fetchTasks(); // Refresh to get latest state
+              } 
+            }]
+          );
+        } else {
+          // For other errors, show the message
+          Alert.alert(
+            'Error', 
+            result.error || 'Failed to accept task. Please try again.',
+            [{ text: 'OK', onPress: () => {} }]
+          );
+        }
+      }
+    } catch (error: any) {
+      logger.error('Error accepting task:', error);
+      Alert.alert(
+        'Error', 
+        error.message || 'An unexpected error occurred. Please try again.',
+        [{ text: 'OK', onPress: () => {} }]
+      );
+    } finally {
+      setAcceptingTask(false);
+    }
+  };
+
+  // Modify the filterTasks function to include task view filtering
+  const filterTasks = () => {
+    if (!tasks || tasks.length === 0) {
+      setFilteredTasks([]);
+      return;
+    }
+
+    // First filter by assignment status if needed
+    let tasksByStatus = [...tasks];
+    
+    if (tasksView !== 'all' && currentUserId) {
+      if (tasksView === 'posted') {
+        tasksByStatus = tasks.filter(task => task.created_by === currentUserId);
+      } else if (tasksView === 'accepted') {
+        tasksByStatus = tasks.filter(task => task.assigned_to === currentUserId);
+      }
+    }
+    
+    // Then apply the other filters
+    let result = tasksByStatus;
+
+    // Category filter
+    if (filters.category && filters.category.length > 0) {
+      result = result.filter(task => {
+        // Check if any of the task categories match the selected category
+        if (Array.isArray(task.categories)) {
+          return task.categories.some(category => filters.category.includes(category));
+        }
+        // Fallback to string category if array not available
+        return filters.category.includes(task.category as string);
+      });
+    }
+
+    // Status filter
+    if (filters.status && filters.status.length > 0) {
+      result = result.filter(task => filters.status.includes(task.status));
+    }
+
+    // Urgency filter
+    if (filters.urgency !== null) {
+      result = result.filter(task => task.urgent === filters.urgency);
+    }
+
+    // Budget filters
+    if (filters.minBudget !== null) {
+      result = result.filter(task => {
+        const budget = task.price || task.budget || 0;
+        return budget >= (filters.minBudget || 0);
+      });
+    }
+
+    if (filters.maxBudget !== null) {
+      result = result.filter(task => {
+        const budget = task.price || task.budget || 0;
+        return budget <= (filters.maxBudget || Infinity);
+      });
+    }
+
+    // Distance filters
+    if (userLocation && filters.distanceRange) {
+      // Sort by distance if distance filter is active
+      if (filters.distanceRange === 'near') {
+        result = result.sort((a, b) => (a.distance || 9999) - (b.distance || 9999));
+      } else if (filters.distanceRange === 'far') {
+        result = result.sort((a, b) => (b.distance || 0) - (a.distance || 0));
+      }
+    }
+
+    // Apply sorting
+    if (sortBy === 'recent') {
+      result = result.sort((a, b) => {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+    } else if (sortBy === 'budget_high') {
+      result = result.sort((a, b) => {
+        const budgetA = a.price || a.budget || 0;
+        const budgetB = b.price || b.budget || 0;
+        return budgetB - budgetA;
+      });
+    } else if (sortBy === 'budget_low') {
+      result = result.sort((a, b) => {
+        const budgetA = a.price || a.budget || 0;
+        const budgetB = b.price || b.budget || 0;
+        return budgetA - budgetB;
+      });
+    }
+
+    setFilteredTasks(result);
+  };
+
+  // Add task view toggle in the header UI
+  const renderTaskViewToggle = () => (
+    <View style={styles.taskViewToggle}>
+      <TouchableOpacity
+        style={[
+          styles.viewToggleButton,
+          tasksView === 'all' && styles.activeViewToggleButton
+        ]}
+        onPress={() => setTasksView('all')}
+      >
+        <Text style={[
+          styles.viewToggleText,
+          tasksView === 'all' && styles.activeViewToggleText
+        ]}>All</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.viewToggleButton,
+          tasksView === 'posted' && styles.activeViewToggleButton
+        ]}
+        onPress={() => setTasksView('posted')}
+      >
+        <Text style={[
+          styles.viewToggleText,
+          tasksView === 'posted' && styles.activeViewToggleText
+        ]}>Posted</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.viewToggleButton,
+          tasksView === 'accepted' && styles.activeViewToggleButton
+        ]}
+        onPress={() => setTasksView('accepted')}
+      >
+        <Text style={[
+          styles.viewToggleText,
+          tasksView === 'accepted' && styles.activeViewToggleText
+        ]}>Accepted</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   if (loading) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
@@ -1158,29 +1365,32 @@ export default function TasksScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top Bar */}
       <View style={styles.topBarContainer}>
         <View style={styles.statusBarSpacing} />
         <View style={styles.topBar}>
           <View style={styles.topBarContent}>
             <Text style={styles.topBarTitle}>Tasks</Text>
-        <TouchableOpacity 
-          style={styles.createButton}
-          onPress={handleCreateTask}
-        >
+            <TouchableOpacity 
+              style={styles.createButton}
+              onPress={handleCreateTask}
+            >
               <Ionicons name="add" size={24} color="#fff" />
-        </TouchableOpacity>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
       
-      {/* Location & Filter Bar */}
+      {/* Task View Toggle */}
+      {renderTaskViewToggle()}
+      
       <View style={styles.locationFilterBar}>
         <View style={styles.userLocationContainer}>
-          <MapPin size={16} color={Colors.primary} />
-          <Text style={styles.userLocationText} numberOfLines={1}>
-            {locationError ? 'Location unavailable' : 
-              userLocation ? userLocation.address : 'Getting location...'}
+          <MapPin size={18} color={Colors.primary} />
+          <Text 
+            style={styles.userLocationText} 
+            numberOfLines={1}
+          >
+            {userLocation?.address || 'Fetching location...'}
           </Text>
         </View>
         
@@ -1189,33 +1399,42 @@ export default function TasksScreen() {
             style={styles.actionButton}
             onPress={toggleSortModal}
           >
-            <Ionicons name="swap-vertical" size={20} color={Colors.text} />
+            <SortDescending size={18} color={Colors.text} />
           </TouchableOpacity>
+          
           <TouchableOpacity 
             style={styles.actionButton}
             onPress={toggleFilterModal}
           >
-            <Ionicons name="filter" size={20} color={Colors.text} />
-            {Object.values(filters).some(
-              value => (Array.isArray(value) && value.length > 0) || 
-              (value !== null && typeof value !== 'object')
-            ) && (
+            <Filter size={18} color={Colors.text} />
+            {(filters.status.length > 0 || filters.category.length > 0 || filters.urgency !== null || filters.minBudget !== null || filters.maxBudget !== null) && (
               <View style={styles.filterBadge} />
             )}
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => setViewType(viewType === 'grid' ? 'list' : 'grid')}
+          >
+            {viewType === 'grid' ? 
+              <List size={18} color={Colors.text} /> : 
+              <Grid size={18} color={Colors.text} />
+            }
           </TouchableOpacity>
         </View>
       </View>
       
       <FlatList
+        key={`tasks-${viewType}`}
         data={filteredTasks}
         renderItem={renderTaskCard}
         keyExtractor={(item) => item.id}
-        numColumns={COLUMN_COUNT}
+        numColumns={viewType === 'grid' ? COLUMN_COUNT : 1}
         contentContainerStyle={styles.listContent}
-            onRefresh={handleRefresh}
+        onRefresh={handleRefresh}
         refreshing={refreshing} 
         showsVerticalScrollIndicator={false}
-        columnWrapperStyle={styles.row}
+        columnWrapperStyle={viewType === 'grid' ? styles.row : undefined}
         ListEmptyComponent={() => (
           <View style={styles.emptyContainer}>
             <Ionicons name="search" size={50} color={Colors.textSecondary} />
@@ -1241,7 +1460,107 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
-    paddingBottom: 20, // Increased padding to lower the tab bar more
+  },
+  locationFilterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: Colors.cardBackground,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    marginBottom: 2,
+  },
+  userLocationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
+  userLocationText: {
+    fontSize: 14,
+    fontFamily: 'SpaceGrotesk-Regular',
+    color: Colors.text,
+    marginLeft: 8,
+    flex: 1,
+  },
+  actionsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.primary,
+  },
+  listContent: {
+    padding: 12,
+    paddingBottom: 100,
+  },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    marginTop: 40,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontFamily: 'SpaceGrotesk-Bold',
+    color: Colors.text,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyText: {
+    fontSize: 14,
+    fontFamily: 'SpaceGrotesk-Regular',
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  resetFiltersButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: 8,
+  },
+  resetFiltersText: {
+    color: 'white',
+    fontFamily: 'SpaceGrotesk-Medium',
+    fontSize: 14,
+  },
+  addTaskButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: Colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
   topBarContainer: {
     backgroundColor: Colors.primary,
@@ -1263,6 +1582,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 5,
     elevation: 6,
+    marginBottom: 4, // Add spacing between top bar and filter bar
   },
   topBarContent: {
     flexDirection: 'row',
@@ -1274,139 +1594,22 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontFamily: 'SpaceGrotesk-Bold',
     color: '#fff',
+    textShadowColor: 'rgba(0, 0, 0, 0.1)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   createButton: {
-    width: 42, // Slightly larger
-    height: 42, // Slightly larger
-    borderRadius: 21,
+    width: 40,
+    height: 40,
+    borderRadius: 20, // Perfect circle
     backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  locationFilterBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
-    backgroundColor: Colors.cardBackground,
-    marginBottom: 2,
-  },
-  userLocationContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  userLocationText: {
-    fontSize: 14,
-    fontFamily: 'SpaceGrotesk-Medium',
-    color: Colors.text,
-    flex: 1,
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  actionButton: {
-    width: 38, // Slightly larger
-    height: 38, // Slightly larger
-    borderRadius: 19,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  listContent: {
-    padding: 16,
-  },
-  row: {
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  taskCard: {
-    width: CARD_WIDTH,
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 16, // Increased roundness
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 12,
-    elevation: 2, // Add slight elevation for depth
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.15,
     shadowRadius: 2,
-  },
-  taskContent: {
-    gap: 8,
-  },
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  urgencyDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  taskTitle: {
-    flex: 1,
-    fontSize: 16,
-    fontFamily: 'SpaceGrotesk-Bold',
-    color: Colors.text,
-  },
-  taskDescription: {
-    fontSize: 14,
-    fontFamily: 'SpaceGrotesk-Regular',
-    color: Colors.textSecondary,
-    lineHeight: 20,
-  },
-  taskFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  metaText: {
-    fontSize: 12,
-    fontFamily: 'SpaceGrotesk-Regular',
-    color: Colors.textSecondary,
-  },
-  urgentBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(244,67,54,0.1)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    gap: 2,
-    alignSelf: 'flex-start',
-  },
-  urgentText: {
-    color: '#F44336',
-    fontSize: 10,
-    fontFamily: 'SpaceGrotesk-Medium',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: Colors.background,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    fontFamily: 'SpaceGrotesk-Regular',
-    color: Colors.textSecondary,
   },
   modalContainer: {
     flex: 1,
@@ -1594,69 +1797,6 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk-Bold',
     color: '#fff',
   },
-  filterBadge: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#FF5252',
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalOverlayTouch: {
-    flex: 1,
-    width: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sortModalContainer: {
-    width: '80%',
-    borderRadius: 16, // Increased roundness
-    overflow: 'hidden',
-  },
-  sortModalContent: {
-    backgroundColor: Colors.cardBackground,
-    borderRadius: 16, // Increased roundness
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 8,
-  },
-  sortModalTitle: {
-    fontSize: 18,
-    fontFamily: 'SpaceGrotesk-Bold',
-    color: Colors.text,
-    marginBottom: 16,
-  },
-  sortOption: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  selectedSortOption: {
-    backgroundColor: 'rgba(63, 137, 249, 0.1)',
-  },
-  sortOptionText: {
-    fontSize: 16,
-    fontFamily: 'SpaceGrotesk-Medium',
-    color: Colors.text,
-  },
-  selectedSortOptionText: {
-    color: Colors.primary,
-  },
   filterModalContainer: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -1764,35 +1904,59 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
   },
-  emptyContainer: {
+  loadingContainer: {
     flex: 1,
-    paddingTop: 40,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
   },
-  emptyTitle: {
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Regular',
+    color: Colors.textSecondary,
+  },
+  sortModalContainer: {
+    width: '80%',
+    borderRadius: 16, // Increased roundness
+    overflow: 'hidden',
+  },
+  sortModalContent: {
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 16, // Increased roundness
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  sortModalTitle: {
     fontSize: 18,
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 14,
-    fontFamily: 'SpaceGrotesk-Regular',
-    color: Colors.textSecondary,
-    textAlign: 'center',
     marginBottom: 16,
   },
-  resetFiltersButton: {
-    paddingVertical: 10,
+  sortOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.1)',
   },
-  resetFiltersText: {
-    fontSize: 14,
+  selectedSortOption: {
+    backgroundColor: 'rgba(63, 137, 249, 0.1)',
+  },
+  sortOptionText: {
+    fontSize: 16,
     fontFamily: 'SpaceGrotesk-Medium',
+    color: Colors.text,
+  },
+  selectedSortOptionText: {
     color: Colors.primary,
   },
   filterModalTitle: {
@@ -1818,9 +1982,24 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   budgetText: {
-    fontSize: 20,
+    fontSize: 18,
     fontFamily: 'SpaceGrotesk-Bold',
-    color: '#4CAF50', // Green text
+    color: '#4CAF50',
+  },
+  urgentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(244,67,54,0.1)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 2,
+    alignSelf: 'flex-start',
+  },
+  urgentText: {
+    color: '#F44336',
+    fontSize: 10,
+    fontFamily: 'SpaceGrotesk-Medium',
   },
   distanceOptionsContainer: {
     flexDirection: 'row',
@@ -1869,6 +2048,63 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'SpaceGrotesk-Medium',
     color: Colors.primary,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontFamily: 'SpaceGrotesk-Bold',
+    color: Colors.text,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalOverlayTouch: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  taskViewToggle: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    backgroundColor: Colors.cardBackground,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  viewToggleButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginHorizontal: 4,
+  },
+  activeViewToggleButton: {
+    backgroundColor: Colors.primary,
+  },
+  viewToggleText: {
+    fontSize: 14,
+    fontFamily: 'SpaceGrotesk-Medium',
+    color: Colors.textSecondary,
+  },
+  activeViewToggleText: {
+    color: '#fff',
   },
 }); 
 

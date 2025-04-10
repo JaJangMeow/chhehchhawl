@@ -1,165 +1,250 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Animated } from 'react-native';
 import { Task } from '../../types/task';
 import Colors from '../../constants/Colors';
-import { MapPin, Clock } from 'lucide-react-native';
+import { MapPin, Clock, User, UserCheck } from 'lucide-react-native';
 import { formatDistance, getTimeAgo, getUrgencyColor, truncateDescription } from '../../utils/taskUtils';
-
-// Available task categories
-const TASK_CATEGORIES = {
-  'home': 'Home',
-  'delivery': 'Delivery',
-  'errands': 'Errands',
-  'tech': 'Tech Support',
-  'education': 'Education',
-  'other': 'Other'
-};
-
-// Task priorities with colors
-const TASK_PRIORITIES = {
-  'low': { label: 'Low', color: '#4CAF50' },
-  'medium': { label: 'Medium', color: '#FFC107' },
-  'high': { label: 'High', color: '#F44336' }
-};
+import { supabase } from '../../lib/supabase';
 
 interface TaskCardProps {
   task: Task;
   onPress: (task: Task) => void;
+  viewType?: 'grid' | 'list';
+  currentUserId?: string | null;
 }
 
-const TaskCard: React.FC<TaskCardProps> = ({ task, onPress }) => {
-  const locationText = task.location?.address || 'Remote';
+const TaskCard: React.FC<TaskCardProps> = ({ task, onPress, viewType = 'grid', currentUserId }) => {
   const distance = task.distance || 0;
   const urgencyColor = getUrgencyColor(task);
-
-  // Get status color based on task status
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return '#FFA726'; // Orange
-      case 'in_progress':
-        return '#29B6F6'; // Blue
-      case 'completed':
-        return '#66BB6A'; // Green
-      case 'cancelled':
-        return '#EF5350'; // Red
-      default:
-        return Colors.textSecondary;
-    }
+  
+  // Animation values
+  const scaleAnim = React.useRef(new Animated.Value(0.97)).current;
+  const opacityAnim = React.useRef(new Animated.Value(0.7)).current;
+  
+  // Task assignment badges
+  const isCreator = task.created_by === currentUserId;
+  const isAssigned = task.assigned_to !== null;
+  const isAssignee = task.assigned_to === currentUserId;
+  
+  // Animate in when component mounts
+  React.useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        friction: 6,
+        tension: 40,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      })
+    ]).start();
+  }, []);
+  
+  // Animation for press
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.98,
+      friction: 5,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
   };
   
-  // Format status label
-  const formatStatus = (status: string) => {
-    return status.replace('_', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 5,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
   };
   
-  // Format date
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'No deadline';
-    
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
-  
-  // Get category name
-  const getCategoryName = (categoryId: string) => {
-    return TASK_CATEGORIES[categoryId as keyof typeof TASK_CATEGORIES] || 'Other';
-  };
-
-  // Get priority data
-  const getPriorityData = (priorityId: string) => {
-    return TASK_PRIORITIES[priorityId as keyof typeof TASK_PRIORITIES] || TASK_PRIORITIES.medium;
+  const animatedCardStyle = {
+    transform: [{ scale: scaleAnim }],
+    opacity: opacityAnim,
   };
   
   return (
-    <TouchableOpacity 
-      style={styles.taskCard} 
-      onPress={() => onPress(task)}
-    >
-      <View style={styles.taskContent}>
-        {/* Title with urgency indicator */}
-        <View style={styles.titleContainer}>
-          <View style={[styles.urgencyDot, { backgroundColor: urgencyColor }]} />
-          <Text style={styles.taskTitle} numberOfLines={2}>
-            {task.title}
-          </Text>
-        </View>
-        
-        {/* Description */}
-        <Text style={styles.taskDescription} numberOfLines={3}>
-          {truncateDescription(task.description)}
-        </Text>
-        
-        {/* Bottom info: location and time posted */}
-        <View style={styles.taskFooter}>
-          <View style={styles.metaItem}>
-            <MapPin size={14} color={Colors.textSecondary} />
-            <Text style={styles.metaText}>
-              {formatDistance(distance)}
+    <Animated.View style={[
+      animatedCardStyle, 
+      viewType === 'grid' ? styles.animatedViewGrid : styles.animatedViewList
+    ]}>
+      <TouchableOpacity 
+        style={[
+          styles.taskCard, 
+          viewType === 'list' ? styles.taskCardList : styles.taskCardGrid
+        ]} 
+        onPress={() => onPress(task)}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={1}
+      >
+        <View style={styles.taskContent}>
+          {/* Title with urgency indicator */}
+          <View style={styles.titleContainer}>
+            <View style={[styles.urgencyDot, { backgroundColor: urgencyColor }]} />
+            <Text style={styles.taskTitle} numberOfLines={viewType === 'list' ? 2 : 1}>
+              {task.title}
             </Text>
           </View>
           
-          <View style={styles.metaItem}>
-            <Clock size={14} color={Colors.textSecondary} />
-            <Text style={styles.metaText}>
-              {getTimeAgo(task.created_at)}
-            </Text>
+          {/* Description */}
+          <Text style={styles.taskDescription} numberOfLines={viewType === 'list' ? 3 : 2}>
+            {truncateDescription(task.description, viewType === 'list' ? 120 : 60)}
+          </Text>
+          
+          {/* Assignment/Creator status badges */}
+          <View style={styles.badgeContainer}>
+            {isCreator && (
+              <View style={[styles.badge, styles.creatorBadge]}>
+                <User size={10} color="#fff" />
+                <Text style={styles.badgeText}>Posted by you</Text>
+              </View>
+            )}
+            
+            {isAssignee && (
+              <View style={[styles.badge, styles.assigneeBadge]}>
+                <UserCheck size={10} color="#fff" />
+                <Text style={styles.badgeText}>Assigned to you</Text>
+              </View>
+            )}
+            
+            {isAssigned && !isAssignee && (
+              <View style={[styles.badge, styles.assignedBadge]}>
+                <UserCheck size={10} color="#fff" />
+                <Text style={styles.badgeText}>Assigned</Text>
+              </View>
+            )}
+          </View>
+          
+          {/* Bottom info: distance and time posted */}
+          <View style={styles.metaContainer}>
+            <View style={styles.metaItem}>
+              <MapPin size={12} color={Colors.textSecondary} />
+              <Text style={styles.metaText}>
+                {formatDistance(distance)}
+              </Text>
+            </View>
+            
+            <View style={styles.metaItem}>
+              <Clock size={12} color={Colors.textSecondary} />
+              <Text style={styles.metaText}>
+                {getTimeAgo(task.created_at)}
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
+  animatedViewGrid: {
+    width: '48.5%', // Slightly less than 50% to account for gap
+    aspectRatio: 1, // Perfect square
+  },
+  animatedViewList: {
+    width: '100%',
+    marginBottom: 8,
+  },
   taskCard: {
     flex: 1,
     backgroundColor: Colors.cardBackground,
-    borderRadius: 16,
+    borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: Colors.border,
+    // Enhanced shadow
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
+  },
+  taskCardGrid: {
     padding: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    height: '100%',
+  },
+  taskCardList: {
+    padding: 16,
+    flexDirection: 'column',
   },
   taskContent: {
-    gap: 8,
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
   },
   titleContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 8,
+    marginBottom: 6,
   },
   urgencyDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
   },
   taskTitle: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 14,
     fontFamily: 'SpaceGrotesk-Bold',
     color: Colors.text,
   },
   taskDescription: {
-    fontSize: 14,
+    fontSize: 12,
     fontFamily: 'SpaceGrotesk-Regular',
     color: Colors.textSecondary,
-    lineHeight: 20,
+    lineHeight: 18,
+    flex: 1,
+    marginBottom: 8,
   },
-  taskFooter: {
+  badgeContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginBottom: 6,
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 4,
+  },
+  creatorBadge: {
+    backgroundColor: Colors.primary,
+  },
+  assigneeBadge: {
+    backgroundColor: '#4CAF50', // Green
+  },
+  assignedBadge: {
+    backgroundColor: '#FFC107', // Amber
+  },
+  badgeText: {
+    fontSize: 9,
+    fontFamily: 'SpaceGrotesk-Medium',
+    color: '#fff',
+  },
+  metaContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
+    marginTop: 'auto',
   },
   metaItem: {
     flexDirection: 'row',
@@ -167,8 +252,8 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   metaText: {
-    fontSize: 12,
-    fontFamily: 'SpaceGrotesk-Regular',
+    fontSize: 11,
+    fontFamily: 'SpaceGrotesk-Medium',
     color: Colors.textSecondary,
   }
 });

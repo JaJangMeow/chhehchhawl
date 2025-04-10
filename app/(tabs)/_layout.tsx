@@ -1,7 +1,7 @@
 import { Tabs, usePathname } from 'expo-router';
 import { Colors } from '../constants/Colors';
 import { Home, ListIcon, MessageCircle, History, User } from 'lucide-react-native';
-import { View, StyleSheet, Pressable } from 'react-native';
+import { View, StyleSheet, Pressable, Text } from 'react-native';
 import Animated, { 
   useAnimatedStyle, 
   useSharedValue, 
@@ -171,6 +171,8 @@ function TabButton(props: any) {
     <Pressable
       onPress={handlePress}
       style={styles.button}
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
     >
       {/* Wrapper for scale animation */}
       <Animated.View style={[styles.buttonContentWrapper, buttonScaleStyle]}>

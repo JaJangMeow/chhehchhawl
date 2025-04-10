@@ -16,6 +16,7 @@ import AddressInput from '@/app/components/auth/AddressInput';
 import ActionButton from '@/app/components/auth/ActionButton';
 import BackgroundImage from '@/app/components/auth/BackgroundImage';
 import { Colors } from '@/app/constants/Colors';
+import { Phone } from 'lucide-react-native';
 
 // Import services
 import { supabase } from '@/app/lib/supabase';
@@ -35,6 +36,25 @@ type FormErrors = {
   aadhaar?: string;
   upi?: string;
 }
+
+type ProfileData = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  address: string;
+  city: string;
+  state: string;
+  updated_at: string;
+  created_at?: string;
+  avatar_url?: string | null;
+  dob?: string | null;
+  gender?: string | null;
+  aadhaar?: string | null;
+  upi?: string | null;
+};
 
 export default function UserInformationScreen() {
   const params = useLocalSearchParams();
@@ -66,6 +86,7 @@ export default function UserInformationScreen() {
   const [error, setError] = useState('');
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [navigating, setNavigating] = useState(false);
+  const [profileCompleted, setProfileCompleted] = useState(false);
 
   // Check if user is authenticated and load existing profile data
   useEffect(() => {
@@ -91,6 +112,8 @@ export default function UserInformationScreen() {
         const sessionUserId = data.session.user.id;
         setUserId(sessionUserId);
         
+        console.log('Loading profile data for user:', sessionUserId);
+        
         // Fetch user profile data
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
@@ -98,11 +121,16 @@ export default function UserInformationScreen() {
           .eq('id', sessionUserId)
           .single();
           
-        if (profileError && profileError.code !== 'PGRST116') {
-          console.error('Error fetching profile:', profileError);
+        if (profileError) {
+          if (profileError.code !== 'PGRST116') {
+            console.error('Error fetching profile:', profileError);
+          } else {
+            console.log('Profile not found, will create one on submit');
+          }
         }
         
         if (profileData) {
+          console.log('Found existing profile data:', profileData);
           // Populate form fields with existing data
           setFirstName(profileData.first_name || '');
           setLastName(profileData.last_name || '');
@@ -119,6 +147,29 @@ export default function UserInformationScreen() {
           setGender(profileData.gender as Gender || null);
           setAadhaar(profileData.aadhaar || '');
           setUpi(profileData.upi || '');
+          
+          // Check if profile is already completed with all required fields
+          if (profileData.first_name && 
+              profileData.last_name && 
+              profileData.address && 
+              profileData.city && 
+              profileData.state && 
+              profileData.dob && 
+              profileData.gender && 
+              profileData.aadhaar) {
+            setProfileCompleted(true);
+          }
+        } else {
+          // Use route params if no profile data exists yet
+          if (params.identifier) {
+            if (params.signUpMethod === 'email') {
+              setEmail(params.identifier as string);
+              const username = (params.identifier as string).split('@')[0];
+              setFirstName(username);
+            } else if (params.signUpMethod === 'phone') {
+              setPhone(params.identifier as string);
+            }
+          }
         }
         
         console.log('Profile data loaded successfully');
@@ -135,7 +186,7 @@ export default function UserInformationScreen() {
 
   // Navigate to tabs after success animation completes
   const navigateToTabs = useCallback(() => {
-    if (success) {
+    if (success || profileCompleted) {
       router.replace({
         pathname: '/(tabs)',
         params: { 
@@ -143,27 +194,37 @@ export default function UserInformationScreen() {
         }
       });
     }
-  }, [success]);
+  }, [success, profileCompleted]);
 
   // Handle animation completion
   const handleAnimationComplete = () => {
     // Add small delay before navigation to ensure animations complete
     if (success) {
-      setTimeout(navigateToTabs, 1000);
+      setTimeout(() => {
+        setProfileCompleted(true);
+      }, 1000);
     }
   };
 
-  // Validate only name and address fields
+  // Validate all required fields
   const validateForm = () => {
     const errors: FormErrors = {};
     
-    // Only validate name and address fields
+    // Validate all required fields
     if (!firstName.trim()) {
       errors.firstName = 'First name is required';
     }
     
     if (!lastName.trim()) {
       errors.lastName = 'Last name is required';
+    }
+    
+    if (!dob) {
+      errors.dob = 'Date of birth is required';
+    }
+    
+    if (!gender) {
+      errors.gender = 'Gender is required';
     }
     
     if (!address.trim()) {
@@ -178,6 +239,14 @@ export default function UserInformationScreen() {
       errors.state = 'State is required';
     }
     
+    if (!aadhaar.trim() || aadhaar.length !== 12) {
+      errors.aadhaar = 'Valid Aadhaar number is required (12 digits)';
+    }
+    
+    if (upi && !validateUPI(upi)) {
+      errors.upi = 'Please enter a valid UPI ID';
+    }
+    
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -186,8 +255,20 @@ export default function UserInformationScreen() {
     if (navigating) return;
     setNavigating(true);
     
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.replace('/(tabs)');
+    // Provide haptic feedback
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    
+    // Add a short delay for better UX
+    setTimeout(() => {
+      // Navigate to the main tab screen
+      router.replace({
+        pathname: '/(tabs)',
+        params: { 
+          from: 'signup_completed',
+          welcome: 'true'
+        }
+      });
+    }, 300);
   };
 
   const handleSubmit = async () => {
@@ -215,8 +296,8 @@ export default function UserInformationScreen() {
       // Always use the current session user's ID
       const sessionUserId = sessionData.session.user.id;
       
-      // Ensure first_name is only the actual first name (no spaces or additional names)
-      const cleanFirstName = firstName.trim().split(' ')[0];
+      // Use the full first name as entered by the user, just trimmed of whitespace
+      const cleanFirstName = firstName.trim();
       
       console.log('Profile data to save:', {
         id: sessionUserId,
@@ -225,40 +306,66 @@ export default function UserInformationScreen() {
         email: email || sessionData.session.user.email,
         address,
         city,
-        state
+        state,
+        dob: dob ? dob.toISOString().split('T')[0] : null,
+        gender,
+        aadhaar,
+        upi: upi || null
       });
+      
+      // Check if profile exists first
+      const { data: existingProfile, error: checkError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', sessionUserId)
+        .single();
+        
+      const profileExists = !checkError && existingProfile;
+      console.log('Profile exists check:', profileExists ? 'Yes' : 'No');
+      
+      // Create profile data to upsert
+      const profileData: ProfileData = {
+        id: sessionUserId, // Always use session ID
+        first_name: cleanFirstName,
+        last_name: lastName,
+        full_name: `${firstName} ${lastName}`.trim(),
+        email: email || sessionData.session.user.email || '',
+        phone: phone || null,
+        address,
+        city,
+        state,
+        updated_at: new Date().toISOString(),
+        dob: dob ? dob.toISOString().split('T')[0] : null,
+        gender,
+        aadhaar,
+        upi: upi || null
+      };
+      
+      // Add created_at if creating a new profile
+      if (!profileExists) {
+        profileData.created_at = new Date().toISOString();
+      }
       
       // Explicitly set supabase to use the current auth context
       const { error: profileError } = await supabase
         .from('profiles')
-        .upsert({
-          id: sessionUserId, // Always use session ID
-          first_name: cleanFirstName,
-          last_name: lastName,
-          full_name: `${firstName} ${lastName}`,
-          email: email || sessionData.session.user.email,
-          address,
-          city,
-          state,
-          updated_at: new Date().toISOString(),
-        }, {
+        .upsert(profileData, {
           onConflict: 'id'
         });
       
       if (profileError) {
         console.error('Profile save error:', profileError);
-        throw new Error('Failed to save profile: ' + profileError.message);
+        throw new Error('Error saving profile: ' + profileError.message);
       }
       
-      // Show success feedback
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setSuccess(true);
       console.log('Profile saved successfully');
       
-      // Navigation will be handled by animation completion callback
-    } catch (error: any) {
-      console.error('Profile save error:', error);
-      setError(error.message || 'An error occurred while saving your information');
+      // Add haptic feedback and set success state
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setSuccess(true);
+    } catch (e) {
+      console.error('Save profile error:', e);
+      setError(e instanceof Error ? e.message : String(e));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setLoading(false);
@@ -267,50 +374,45 @@ export default function UserInformationScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
-
-      {/* Background image */}
+      <StatusBar style="dark" />
       <BackgroundImage imageUri="https://images.unsplash.com/photo-1579546929518-9e396f3cc809?q=80&w=2070&auto=format&fit=crop" />
-      
-      <KeyboardAwareScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        enableOnAndroid={true}
-        enableResetScrollToCoords={false}
-        keyboardShouldPersistTaps="handled"
+      <Stack.Screen
+        options={{
+          headerShown: false,
+        }}
+      />
+      <KeyboardAwareScrollView 
+        style={styles.scrollContainer}
+        contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
-        <Stack.Screen
-          options={{
-            headerShown: false,
-            animation: 'fade',
-            animationDuration: 200,
-            gestureEnabled: false,
-          }}
-        />
-        
-        <View style={styles.header}>
-          <Animated.Text 
-            style={styles.title}
-            entering={FadeIn.duration(800)}
-          >
-            Edit Profile
+        <View style={styles.content}>
+          <Animated.Text entering={FadeInDown.duration(1000).springify()} style={styles.headerText}>
+            Let us know more about you
           </Animated.Text>
-          <Animated.Text 
-            style={styles.subtitle}
-            entering={FadeIn.delay(300).duration(800)}
-          >
-            You can only change your name and address
+          <Animated.Text entering={FadeInDown.delay(100).duration(1000).springify()} style={styles.subtitleText}>
+            Please fill in your information
           </Animated.Text>
-        </View>
-        
-        {initialLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={Colors.primary} />
-            <Text style={styles.loadingText}>Loading your profile...</Text>
-          </View>
-        ) : (
+
           <View style={styles.formContainer}>
+            {signUpMethod === 'phone' ? (
+              <View style={styles.readonlyInputContainer}>
+                <Text style={styles.label}>Phone</Text>
+                <View style={styles.phoneDisplayContainer}>
+                  <Phone size={20} color={Colors.primary} />
+                  <Text style={styles.phoneValue}>{phone || ''}</Text>
+                </View>
+              </View>
+            ) : (
+              <PhoneInput
+                label="Phone"
+                value={phone}
+                onChangeText={setPhone}
+                delay={300}
+                error={formErrors.phone}
+              />
+            )}
+
             {/* First Name */}
             <FormInput
               label="First Name"
@@ -333,6 +435,24 @@ export default function UserInformationScreen() {
               autoCapitalize="words"
               delay={150}
               error={formErrors.lastName}
+            />
+            
+            {/* Date of Birth */}
+            <DatePicker
+              label="Date of Birth"
+              value={dob}
+              onChange={setDob}
+              delay={200}
+              error={formErrors.dob}
+            />
+            
+            {/* Gender */}
+            <GenderDropdown
+              label="Gender"
+              value={gender}
+              onChange={setGender}
+              delay={250}
+              error={formErrors.gender}
             />
 
             {/* Address with autocomplete */}
@@ -369,13 +489,24 @@ export default function UserInformationScreen() {
               delay={375}
               error={formErrors.city}
             />
-
-            {/* Read-only information label */}
-            <View style={styles.infoMessage}>
-              <Text style={styles.infoText}>
-                Other profile information can only be updated by contacting support.
-              </Text>
-            </View>
+            
+            {/* Aadhaar Number */}
+            <AadhaarInput
+              label="Aadhaar Number"
+              value={aadhaar}
+              onChangeText={setAadhaar}
+              delay={400}
+              error={formErrors.aadhaar}
+            />
+            
+            {/* UPI ID */}
+            <UpiInput
+              label="UPI ID (Optional)"
+              value={upi}
+              onChangeText={setUpi}
+              delay={450}
+              error={formErrors.upi}
+            />
 
             {/* General Error Message */}
             {error ? (
@@ -391,16 +522,17 @@ export default function UserInformationScreen() {
               onLayout={handleAnimationComplete}
             >
               <ActionButton
-                title="Save Changes"
+                title="Kan Lo Lawm A Che :)"
                 onPress={handleSubmit}
                 isLoading={loading}
                 loadingText="Saving Information..."
                 success={success}
-                successText="Profile Updated!"
+                successText="Profile Completed!"
+                style={styles.submitButton}
               />
             </Animated.View>
           </View>
-        )}
+        </View>
       </KeyboardAwareScrollView>
     </SafeAreaView>
   );
@@ -409,48 +541,74 @@ export default function UserInformationScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: '#fff',
   },
-  scrollView: {
+  scrollContainer: {
     flex: 1,
   },
-  scrollContent: {
-    flexGrow: 1,
-    paddingBottom: 50,
-  },
-  header: {
+  content: {
     paddingHorizontal: 24,
-    paddingTop: 80,
-    paddingBottom: 20,
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
   },
-  title: {
-    fontSize: 32,
-    fontFamily: 'SpaceGrotesk-Bold',
+  headerText: {
+    fontSize: 28,
+    fontWeight: 'bold',
     color: Colors.text,
-    marginBottom: 12,
+    textAlign: 'center',
   },
-  subtitle: {
+  subtitleText: {
     fontSize: 16,
-    fontFamily: 'SpaceGrotesk-Regular',
     color: Colors.textSecondary,
+    marginTop: 8,
+    marginBottom: 24,
+    textAlign: 'center',
   },
   formContainer: {
-    padding: 24,
+    gap: 16,
+  },
+  submitButton: {
+    marginTop: 24,
+  },
+  readonlyInputContainer: {
+    marginBottom: 12,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  phoneDisplayContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#f5f5f5',
+  },
+  phoneValue: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: Colors.text,
   },
   buttonContainer: {
     marginTop: 32,
     marginBottom: 40,
   },
-  welcomeButtonContainer: {
-    marginTop: 24,
-    marginBottom: 40,
+  completedContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
   welcomeButton: {
-    backgroundColor: '#4C9F70', // A different color for variety
+    backgroundColor: '#4C9F70',
+    paddingVertical: 18,
   },
   welcomeText: {
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: 12,
     color: Colors.textSecondary,
     fontFamily: 'SpaceGrotesk-Regular',
     fontSize: 14,
