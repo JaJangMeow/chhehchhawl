@@ -35,8 +35,14 @@
     "extra": {
       "router": {
         "origin": false
+      },
+      "eas": {
+        "projectId": "ebc09ec1-31da-4ab4-8ce8-5a54959e82d6"
       }
     },
-    "owner": "shibya"
+    "owner": "shibya",
+    "prebuildConfig": {
+      "autoConfigPrebuilds": false
+    }
   }
 }
