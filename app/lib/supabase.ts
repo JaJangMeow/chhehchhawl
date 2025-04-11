@@ -12,7 +12,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error('Supabase URL and Anon Key must be provided. Check your environment variables.');
 }
 
-// Create a more robust AsyncStorage wrapper
+// Create a more robust AsyncStorage wrapper compatible with AsyncStorage 2.1.2
 const customStorage = {
   async getItem(key: string): Promise<string | null> {
     try {
@@ -45,6 +45,30 @@ const customStorage = {
       await AsyncStorage.removeItem(key);
     } catch (error) {
       console.error('Error removing item from storage:', error);
+    }
+  },
+  // Add multi-operation methods for AsyncStorage 2.1.2 compatibility
+  async multiGet(keys: string[]): Promise<readonly [string, string | null][]> {
+    try {
+      const result = await AsyncStorage.multiGet(keys);
+      return result;
+    } catch (error) {
+      console.error('Error in multiGet:', error);
+      return keys.map(key => [key, null] as [string, null]);
+    }
+  },
+  async multiSet(keyValuePairs: [string, string][]): Promise<void> {
+    try {
+      await AsyncStorage.multiSet(keyValuePairs);
+    } catch (error) {
+      console.error('Error in multiSet:', error);
+    }
+  },
+  async multiRemove(keys: string[]): Promise<void> {
+    try {
+      await AsyncStorage.multiRemove(keys);
+    } catch (error) {
+      console.error('Error in multiRemove:', error);
     }
   }
 };
@@ -228,6 +252,7 @@ export const getUserId = async (): Promise<string | null> => {
 /**
  * Check if session storage is working correctly
  * This is a simplified version that just tests basic AsyncStorage functionality
+ * Updated for AsyncStorage 2.1.2 compatibility
  */
 export const checkSessionStorageHealth = async (): Promise<boolean> => {
   if (!__DEV__) {
@@ -267,8 +292,23 @@ export const checkSessionStorageHealth = async (): Promise<boolean> => {
       return false;
     }
     
-    // Test deleting
-    await AsyncStorage.removeItem(testKey);
+    // Test multi operations
+    await AsyncStorage.multiSet([
+      [testKey + '_1', 'Test 1'],
+      [testKey + '_2', 'Test 2']
+    ]);
+    console.log('[StorageTest] Successfully stored multiple items');
+    
+    const multiResult = await AsyncStorage.multiGet([testKey + '_1', testKey + '_2']);
+    if (multiResult[0][1] === 'Test 1' && multiResult[1][1] === 'Test 2') {
+      console.log('[StorageTest] Successfully retrieved multiple items ✅');
+    } else {
+      console.error('[StorageTest] Multi-get test failed ❌');
+      return false;
+    }
+    
+    // Test removing all test data
+    await AsyncStorage.multiRemove([testKey, testKey + '_1', testKey + '_2']);
     console.log('[StorageTest] Successfully cleaned up test data');
     
     console.log('[StorageTest] All storage tests passed ✅');
