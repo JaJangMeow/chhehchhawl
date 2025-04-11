@@ -1,105 +1,56 @@
-import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Colors } from '@/app/constants/Colors';
-import { FontAwesome } from '@expo/vector-icons';
-
-type ToastType = 'success' | 'error' | 'info' | 'warning';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { AlertCircle } from 'lucide-react-native';
+import Colors from '../../constants/Colors';
 
 interface ToastProps {
   message: string;
-  type?: ToastType;
-  duration?: number;
-  onClose?: () => void;
+  show: boolean;
+  onHide: () => void;
 }
 
-export const Toast: React.FC<ToastProps> = ({
-  message,
-  type = 'info',
-  duration = 3000,
-  onClose,
-}) => {
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  
+const Toast: React.FC<ToastProps> = ({ message, show, onHide }) => {
+  const [fadeAnim] = useState(new Animated.Value(0)); // Initial value for opacity: 0
+
   useEffect(() => {
-    // Fade in
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-    
-    // Set timeout for auto-close
-    const timer = setTimeout(() => {
-      Animated.timing(fadeAnim, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: true,
-      }).start(() => {
-        if (onClose) onClose();
+    if (show) {
+      Animated.timing(
+        fadeAnim,
+        {
+          toValue: 1,
+          duration: 500,
+          easing: Easing.ease,
+          useNativeDriver: true,
+        }
+      ).start(() => {
+        setTimeout(() => {
+          Animated.timing(
+            fadeAnim,
+            {
+              toValue: 0,
+              duration: 500,
+              easing: Easing.ease,
+              useNativeDriver: true,
+            }
+          ).start(onHide);
+        }, 3000);
       });
-    }, duration);
-    
-    return () => clearTimeout(timer);
-  }, [fadeAnim, duration, onClose]);
-  
-  // Handle manual close
-  const handleClose = () => {
-    Animated.timing(fadeAnim, {
-      toValue: 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start(() => {
-      if (onClose) onClose();
-    });
-  };
-  
-  const getToastStyle = (): any => {
-    switch (type) {
-      case 'success':
-        return { backgroundColor: Colors.success };
-      case 'error':
-        return { backgroundColor: Colors.danger };
-      case 'warning':
-        return { backgroundColor: Colors.warning };
-      case 'info':
-      default:
-        return { backgroundColor: Colors.primary };
+    } else {
+      fadeAnim.setValue(0);
     }
-  };
-  
-  const getIcon = (): string => {
-    switch (type) {
-      case 'success':
-        return 'check-circle';
-      case 'error':
-        return 'exclamation-circle';
-      case 'warning':
-        return 'exclamation-triangle';
-      case 'info':
-      default:
-        return 'info-circle';
-    }
-  };
-  
+  }, [show, fadeAnim, onHide]);
+
   return (
     <Animated.View
       style={[
         styles.container,
-        getToastStyle(),
-        { opacity: fadeAnim },
+        {
+          opacity: fadeAnim,
+        }
       ]}
     >
-      <View style={styles.content}>
-        <FontAwesome name={getIcon()} size={20} color="white" style={styles.icon} />
-        <Text style={styles.message}>{message}</Text>
-      </View>
-      <TouchableOpacity 
-        onPress={handleClose}
-        style={styles.closeButton}
-        activeOpacity={0.7}
-      >
-        <FontAwesome name="times" size={16} color="white" />
-      </TouchableOpacity>
+      <AlertCircle size={20} color="#fff" />{/* Replace with valid icon */}
+      <Text style={styles.text}>{message}</Text>
     </Animated.View>
   );
 };
@@ -107,41 +58,22 @@ export const Toast: React.FC<ToastProps> = ({
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 50,
-    left: 20,
-    right: 20,
-    borderRadius: 8,
-    padding: 16,
-    flexDirection: 'row',
+    top: 60,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 24,
+    marginHorizontal: 16,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-    zIndex: 1000,
-  },
-  content: {
-    flex: 1,
+    justifyContent: 'center',
     flexDirection: 'row',
-    alignItems: 'center',
   },
-  icon: {
-    marginRight: 12,
-  },
-  message: {
-    color: 'white',
-    fontWeight: '500',
-    flex: 1,
-  },
-  closeButton: {
-    padding: 4,
+  text: {
+    color: Colors.white,
+    marginLeft: 8,
   },
 });
 
-// Add default export
-export default Toast; 
+export default Toast;

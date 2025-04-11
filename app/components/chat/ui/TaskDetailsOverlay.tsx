@@ -72,7 +72,7 @@ const TaskDetailsOverlay: React.FC<TaskDetailsProps> = ({ task, currentUserId, o
         alert('Unable to open maps navigation. Please try again.');
       });
     } else {
-      alert('No Location', 'This task does not have a location specified.');
+      alert('This task does not have a location specified.');
     }
   };
   
@@ -340,4 +340,4 @@ const styles = StyleSheet.create({
   }
 });
 
-export default TaskDetailsOverlay; 
+export default TaskDetailsOverlay;

@@ -1,4 +1,5 @@
-import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
+
+import { format, formatDistance, isToday, isYesterday } from 'date-fns';
 
 /**
  * Format a date relative to the current time
@@ -21,7 +22,7 @@ export const formatRelativeTime = (dateString: string): string => {
     const minutesAgo = (Date.now() - date.getTime()) / (1000 * 60);
     if (minutesAgo < 60) {
       // For very recent messages (less than an hour ago)
-      return formatDistanceToNow(date, { addSuffix: true });
+      return formatDistance(date, new Date(), { addSuffix: true });
     }
     
     // Today
@@ -50,4 +51,4 @@ export const formatRelativeTime = (dateString: string): string => {
 
 export default {
   formatRelativeTime
-}; 
+};

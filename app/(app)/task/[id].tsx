@@ -73,10 +73,17 @@ export default function TaskDetailScreen() {
     try {
       setLoading(true);
       const taskData = await taskService.getTaskById(id as string);
+      
+      if (!taskData) {
+        setError('Task not found');
+        setLoading(false);
+        return;
+      }
+      
       setTask(taskData);
       
       // Determine user role and fetch the other involved user
-      if (currentUserId) {
+      if (currentUserId && taskData) {
         if (taskData.created_by === currentUserId) {
           setUserRole('owner');
           if (taskData.assigned_to) {
@@ -84,7 +91,9 @@ export default function TaskDetailScreen() {
           }
         } else if (taskData.assigned_to === currentUserId) {
           setUserRole('assigned');
-          await fetchUserProfile(taskData.created_by);
+          if (taskData.created_by) {
+            await fetchUserProfile(taskData.created_by);
+          }
         }
       }
       
@@ -240,9 +249,9 @@ export default function TaskDetailScreen() {
           
           {/* Priority/Urgency */}
           <View style={styles.metadataItem}>
-            <Star size={18} color={getUrgencyColor(task.urgency)} />
+            <Star size={18} color={getUrgencyColor(task.priority || 'medium')} />
             <Text style={styles.metadataText}>
-              Urgency: {task.urgency}
+              Priority: {task.priority || 'medium'}
             </Text>
           </View>
         </View>
@@ -297,7 +306,7 @@ export default function TaskDetailScreen() {
           <View style={styles.infoRow}>
             <IndianRupee size={20} color={Colors.text} />
             <Text style={styles.infoValue}>
-              ₹{task.budget.toLocaleString('en-IN')}
+              ₹{(task.budget || 0).toLocaleString('en-IN')}
             </Text>
           </View>
         </View>
@@ -309,7 +318,9 @@ export default function TaskDetailScreen() {
               <MapPin size={20} color={Colors.text} />
               <Text style={styles.infoValue}>
                 {task.location.address || 
-                  `${task.location.lat.toFixed(6)}, ${task.location.lng.toFixed(6)}`}
+                  ((task.location.lat !== undefined && task.location.lng !== undefined) ? 
+                    `${task.location.lat.toFixed(6)}, ${task.location.lng.toFixed(6)}` : 
+                    'Location coordinates not available')}
               </Text>
             </View>
           </View>
@@ -483,4 +494,4 @@ const styles = StyleSheet.create({
     fontFamily: 'SpaceGrotesk-Regular',
     color: Colors.textSecondary,
   },
-}); 
+});

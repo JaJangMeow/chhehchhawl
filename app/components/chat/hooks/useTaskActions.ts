@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback } from 'react';
 import { Alert } from 'react-native';
 import { supabase } from '@/app/lib/supabase';
@@ -229,7 +230,8 @@ const useTaskActions = (
     
     setTaskActionLoading(true);
     try {
-      const result = await taskAcceptanceService.updateAcceptanceStatus(acceptanceId, status);
+      // Fix: use respondToAcceptanceWithChatNotification method which exists in taskAcceptanceService
+      const result = await taskAcceptanceService.respondToAcceptanceWithChatNotification(acceptanceId, status);
       
       if (result.success) {
         // Show toast notification
@@ -293,13 +295,17 @@ const useTaskActions = (
               
               if (isOwner) {
                 // Owner cancelling the task entirely
-                result = await taskService.cancelTask(taskId);
+                // Use the method from taskService that exists
+                result = await taskService.updateTaskStatus(taskId, 'cancelled');
               } else {
-                // Tasker cancelling their assignment
-                result = await taskService.cancelTaskAssignment(taskId);
+                // Tasker cancelling their assignment - we'll update the task status
+                result = await taskService.updateTask(taskId, { 
+                  assigned_to: null, 
+                  status: 'pending' 
+                });
               }
               
-              if (result.success) {
+              if (result) {
                 // Show toast notification
                 setToastMessage(isOwner ? "Task cancelled" : "Task assignment cancelled");
                 setShowToast(true);
@@ -335,7 +341,7 @@ const useTaskActions = (
                     });
                 }
               } else {
-                Alert.alert("Error", result.error || "Failed to cancel task");
+                Alert.alert("Error", "Failed to cancel task");
               }
             } catch (err) {
               logger.error('Error cancelling task:', err);
@@ -360,4 +366,4 @@ const useTaskActions = (
 };
 
 export { useTaskActions };
-export default useTaskActions; 
+export default useTaskActions;

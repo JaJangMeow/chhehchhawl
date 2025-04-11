@@ -9,7 +9,7 @@ import { supabase } from '@/app/lib/supabase';
 import { logger } from '@/app/utils/logger';
 import * as Haptics from 'expo-haptics';
 import { taskService } from '@/app/services/taskService';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistance } from 'date-fns';
 
 interface AcceptanceCardProps {
   acceptance: TaskAcceptance;
@@ -33,7 +33,6 @@ const AcceptanceCard = ({
   const [acceptorProfile, setAcceptorProfile] = useState<any>(null);
   const [subscriptionActive, setSubscriptionActive] = useState(false);
 
-  // Get the acceptor's profile
   useEffect(() => {
     const fetchProfile = async () => {
       try {
@@ -59,13 +58,12 @@ const AcceptanceCard = ({
     fetchProfile();
   }, [acceptance]);
 
-  // Subscribe to changes in the task acceptance
   useEffect(() => {
     if (subscriptionActive) return;
     
-    const subscription = taskAcceptanceService.subscribeToTaskAcceptance(
+    const subscription = taskAcceptanceService.subscribeToTaskAcceptanceUpdates(
       acceptance.id,
-      (payload) => {
+      (payload: any) => {
         if (payload.new && payload.new.status) {
           setStatus(payload.new.status);
           if (onUpdateStatus) {
@@ -145,7 +143,6 @@ const AcceptanceCard = ({
     router.push(`/tasks/${acceptance.task_id}` as any);
   };
 
-  // Render the status badge
   const renderStatusBadge = () => {
     let StatusIcon;
     let statusText;
@@ -178,10 +175,9 @@ const AcceptanceCard = ({
     );
   };
 
-  // Format the time distance (e.g., "3 hours ago")
   const getTimeAgo = () => {
     try {
-      return formatDistanceToNow(new Date(acceptance.created_at), { addSuffix: true });
+      return formatRelativeTime(acceptance.created_at);
     } catch (error) {
       return '';
     }
@@ -191,7 +187,6 @@ const AcceptanceCard = ({
 
   return (
     <View style={styles.container}>
-      {/* Header section with profile info */}
       <View style={styles.header}>
         <View style={styles.profileInfo}>
           <View style={styles.avatarContainer}>
@@ -218,14 +213,12 @@ const AcceptanceCard = ({
         {renderStatusBadge()}
       </View>
       
-      {/* Message section */}
       {acceptance.message && (
         <View style={styles.messageContainer}>
           <Text style={styles.message}>{acceptance.message}</Text>
         </View>
       )}
       
-      {/* Action buttons section */}
       <View style={styles.actionsContainer}>
         <TouchableOpacity 
           style={styles.viewTaskButton}
@@ -380,4 +373,4 @@ const styles = StyleSheet.create({
   }
 });
 
-export default AcceptanceCard; 
+export default AcceptanceCard;
