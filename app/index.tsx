@@ -14,6 +14,7 @@ import Animated, {
   withTiming,
   withSequence,
   withDelay,
+  withRepeat,
   Easing,
   interpolate
 } from 'react-native-reanimated';
@@ -21,16 +22,18 @@ import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/app/lib/supabase';
-import Logo from '@/app/components/shared/Logo';
 
 const { width, height } = Dimensions.get('window');
 
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
   
-  // Animation values for button interactions
+  // Animation values
   const loginScale = useSharedValue(1);
   const signupScale = useSharedValue(1);
+  const logoFloat = useSharedValue(0);
+  const logoRotate = useSharedValue(0);
+  const titleGlow = useSharedValue(0);
   
   // Check for existing session and redirect if needed
   useEffect(() => {
@@ -55,6 +58,39 @@ export default function WelcomeScreen() {
     checkSession();
   }, []);
 
+  // Start animations on component mount
+  useEffect(() => {
+    // Floating animation for logo
+    logoFloat.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 2000, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0, { duration: 2000, easing: Easing.inOut(Easing.sin) })
+      ),
+      -1, // Infinite repetition
+      true // Reverse animation
+    );
+    
+    // Subtle rotation for logo
+    logoRotate.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 4000, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0, { duration: 4000, easing: Easing.inOut(Easing.sin) })
+      ),
+      -1,
+      true
+    );
+    
+    // Subtle glow effect for title
+    titleGlow.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 2000, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0.2, { duration: 2000, easing: Easing.inOut(Easing.sin) })
+      ),
+      -1,
+      true
+    );
+  }, []);
+
   // Animated styles for buttons
   const loginAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -65,6 +101,26 @@ export default function WelcomeScreen() {
   const signupAnimatedStyle = useAnimatedStyle(() => {
     return {
       transform: [{ scale: signupScale.value }],
+    };
+  });
+  
+  // Animated style for floating logo
+  const logoAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateY: interpolate(logoFloat.value, [0, 1], [0, -10]) },
+        { rotate: `${interpolate(logoRotate.value, [0, 1], [0, 3])}deg` }
+      ],
+    };
+  });
+  
+  // Animated style for glowing title
+  const titleAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      textShadowColor: Colors.primary,
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: interpolate(titleGlow.value, [0, 1], [2, 5]),
+      opacity: interpolate(titleGlow.value, [0.2, 1], [0.9, 1]),
     };
   });
 
@@ -96,10 +152,14 @@ export default function WelcomeScreen() {
       <View style={styles.content}>
         {/* Logo */}
         <Animated.View 
-          style={styles.logoContainer}
+          style={[styles.logoContainer, logoAnimatedStyle]}
           entering={FadeInDown.delay(200).duration(800).springify()}
         >
-          <Logo size="large" />
+          <Image 
+            source={require('../assets/images/logo.png')} 
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </Animated.View>
         
         {/* App name */}
@@ -107,9 +167,11 @@ export default function WelcomeScreen() {
           style={styles.appNameContainer}
           entering={FadeInDown.delay(300).duration(800).springify()}
         >
-          <Text style={styles.appName}>CHHEHCHHAWL</Text>
+          <Animated.Text style={[styles.appName, titleAnimatedStyle]}>
+            CHHEHCHHAWL
+          </Animated.Text>
           <Text style={styles.tagline}>
-            Feel less stressed and more mindful{'\n'}with local service
+            Connecting communities through local tasks,{'\n'}making daily life simpler and more meaningful
           </Text>
         </Animated.View>
 
@@ -166,18 +228,29 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     alignItems: 'center',
-    marginTop: 40,
+    marginTop: 20,
+    width: '100%',
+    maxHeight: 200,
+    alignSelf: 'flex-end',
+    position: 'relative',
+    right: -20,
+  },
+  logoImage: {
+    width: 200,
+    height: 200,
+    tintColor: Colors.primary,
   },
   appNameContainer: {
     alignItems: 'center',
-    marginTop: -60,
+    marginTop: -30,
   },
   appName: {
     color: '#fff',
-    fontSize: 48,
+    fontSize: 38,
     fontFamily: 'SpaceGrotesk-Bold',
-    letterSpacing: 2,
+    letterSpacing: 1,
     textAlign: 'center',
+    width: '100%',
   },
   tagline: {
     color: '#A0A0A0',
@@ -201,6 +274,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   buttonContent: {
     flexDirection: 'row',
